@@ -43,6 +43,17 @@
 #include <limits>
 #include <string>
 #include <sys/stat.h>
+#include <unordered_map>
+
+#if !defined(NDEBUG)
+#include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <mutex>
+#include <sstream>
+#endif
 #include <utility>
 #include <vector>
 
@@ -79,6 +90,64 @@ std::vector<std::string> SplitFieldNames(const std::string& fieldList)
   }
   return result;
 }
+
+#if !defined(NDEBUG)
+std::string FluentCffDebugTimestamp()
+{
+  const auto now = std::chrono::system_clock::now();
+  const auto tt = std::chrono::system_clock::to_time_t(now);
+  std::tm localTime{};
+#if defined(_WIN32)
+  localtime_s(&localTime, &tt);
+#else
+  localtime_r(&tt, &localTime);
+#endif
+  const auto ms =
+    std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
+
+  std::ostringstream oss;
+  oss << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S") << "." << std::setw(3) << std::setfill('0')
+      << ms;
+  return oss.str();
+}
+
+void FluentCffDebugLog(const std::string& message)
+{
+  static std::mutex logMutex;
+  static std::ofstream logFile;
+  static bool initialized = false;
+  std::lock_guard<std::mutex> lock(logMutex);
+
+  if (!initialized)
+  {
+    if (const char* logPath = std::getenv("FLUENT_CFF_DEBUG_LOG"))
+    {
+      if (logPath[0] != '\0')
+      {
+        logFile.open(logPath, std::ios::app);
+      }
+    }
+    initialized = true;
+  }
+
+  const std::string line =
+    "[" + FluentCffDebugTimestamp() + "][vtkFLUENTCFFReader][debug] " + message;
+  std::cerr << line << '\n';
+  if (logFile.is_open())
+  {
+    logFile << line << '\n';
+    logFile.flush();
+  }
+}
+
+void FluentCffDebugPrintMs(const char* label, std::chrono::steady_clock::time_point t0)
+{
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::steady_clock::now() - t0)
+                    .count();
+  FluentCffDebugLog(std::string(label) + " " + std::to_string(ms) + " ms");
+}
+#endif
 }
 
 //------------------------------------------------------------------------------
@@ -119,6 +188,8 @@ void vtkFLUENTCFFReader::ResetMeshState()
   this->Faces.clear();
   this->CellZones.clear();
   this->FaceZones.clear();
+  this->CellIndicesByZone.clear();
+  this->FaceZoneTopologyCaches.clear();
   this->NumberOfCells = 0;
 }
 
@@ -215,10 +286,36 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     g = vtkUnstructuredGrid::New();
   }
 
-  for (auto& cell : this->Cells)
+  std::unordered_map<int, std::size_t> zoneToLocation;
+  zoneToLocation.reserve(this->CellZones.size());
+  this->CellIndicesByZone.clear();
+  this->CellIndicesByZone.resize(this->CellZones.size());
+  for (std::size_t location = 0; location < this->CellZones.size(); ++location)
   {
-    std::size_t location = std::find(this->CellZones.begin(), this->CellZones.end(), cell.zone) -
-      this->CellZones.begin();
+    zoneToLocation.emplace(this->CellZones[location], location);
+  }
+  for (vtkIdType cellId = 0; cellId < static_cast<vtkIdType>(this->Cells.size()); ++cellId)
+  {
+    const auto zoneIt = zoneToLocation.find(this->Cells[static_cast<std::size_t>(cellId)].zone);
+    if (zoneIt != zoneToLocation.end())
+    {
+      this->CellIndicesByZone[zoneIt->second].push_back(cellId);
+    }
+  }
+
+#if !defined(NDEBUG)
+  std::chrono::steady_clock::duration polyhedronWriteDuration{};
+  vtkIdType polyhedronCellCount = 0;
+#endif
+
+  for (const auto& cell : this->Cells)
+  {
+    const auto zoneIt = zoneToLocation.find(cell.zone);
+    if (zoneIt == zoneToLocation.end())
+    {
+      continue;
+    }
+    const std::size_t location = zoneIt->second;
 
     if (cell.type == 1)
     {
@@ -271,6 +368,9 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     }
     else if (cell.type == 7)
     {
+#if !defined(NDEBUG)
+      const auto polyhedronStep0 = std::chrono::steady_clock::now();
+#endif
       vtkNew<vtkIdList> pointIds;
       vtkNew<vtkIdTypeArray> nodes;
       vtkNew<vtkIdTypeArray> nodesOffset;
@@ -294,8 +394,23 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
       }
       grid[location]->InsertNextCell(
         VTK_POLYHEDRON, pointIds->GetNumberOfIds(), pointIds->GetPointer(0), faces);
+#if !defined(NDEBUG)
+      polyhedronWriteDuration += (std::chrono::steady_clock::now() - polyhedronStep0);
+      ++polyhedronCellCount;
+#endif
     }
   }
+
+#if !defined(NDEBUG)
+  if (polyhedronCellCount > 0)
+  {
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronWriteDuration)
+                      .count();
+    FluentCffDebugLog(
+      "polyhedron vtkIdTypeArray WritePointer + VTK_POLYHEDRON InsertNextCell total cells=" +
+      std::to_string(polyhedronCellCount) + " " + std::to_string(ms) + " ms");
+  }
+#endif
 
   for (const auto& dataChunk : this->CellDataChunks)
   {
@@ -309,15 +424,19 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     }
     else
     {
+#if !defined(NDEBUG)
+      const auto cellDataChunk0 = std::chrono::steady_clock::now();
+#endif
       for (std::size_t location = 0; location < this->CellZones.size(); location++)
       {
         vtkNew<vtkDoubleArray> doubleArray;
         doubleArray->SetNumberOfComponents(static_cast<int>(dataChunk.dim));
+        const std::vector<vtkIdType>& zoneCellIndices = this->CellIndicesByZone[location];
+        const std::size_t tupleCapacity = dataChunk.dataVector.size() / dataChunk.dim;
         vtkIdType tupleCount = 0;
-        for (std::size_t idxCell = 0; idxCell < dataChunk.dataVector.size() / dataChunk.dim;
-             idxCell++)
+        for (vtkIdType cellId : zoneCellIndices)
         {
-          if (this->Cells[idxCell].zone == this->CellZones[location])
+          if (cellId >= 0 && static_cast<std::size_t>(cellId) < tupleCapacity)
           {
             ++tupleCount;
           }
@@ -325,11 +444,11 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
         double* tuplePtr =
           doubleArray->WritePointer(0, tupleCount * static_cast<vtkIdType>(dataChunk.dim));
         vtkIdType tupleOffset = 0;
-        for (std::size_t idxCell = 0; idxCell < dataChunk.dataVector.size() / dataChunk.dim;
-             idxCell++)
+        for (vtkIdType cellId : zoneCellIndices)
         {
-          if (this->Cells[idxCell].zone == this->CellZones[location])
+          if (cellId >= 0 && static_cast<std::size_t>(cellId) < tupleCapacity)
           {
+            const std::size_t idxCell = static_cast<std::size_t>(cellId);
             for (std::size_t dim = 0; dim < dataChunk.dim; dim++)
             {
               tuplePtr[tupleOffset++] = dataChunk.dataVector[dim + dataChunk.dim * idxCell];
@@ -339,6 +458,15 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
         doubleArray->SetName(dataChunk.variableName.c_str());
         grid[location]->GetCellData()->AddArray(doubleArray);
       }
+#if !defined(NDEBUG)
+      {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - cellDataChunk0)
+                          .count();
+        FluentCffDebugLog("cell data vtkDoubleArray WritePointer chunk=\"" + dataChunk.variableName +
+          "\" " + std::to_string(ms) + " ms");
+      }
+#endif
     }
   }
 
@@ -356,17 +484,37 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
 void vtkFLUENTCFFReader::ParseUDMData(
   std::vector<vtkSmartPointer<vtkUnstructuredGrid>>& grid, const DataChunk& dataChunk)
 {
+  if (this->CellIndicesByZone.size() != this->CellZones.size())
+  {
+    this->CellIndicesByZone.clear();
+    this->CellIndicesByZone.resize(this->CellZones.size());
+    for (vtkIdType cellId = 0; cellId < static_cast<vtkIdType>(this->Cells.size()); ++cellId)
+    {
+      for (std::size_t location = 0; location < this->CellZones.size(); ++location)
+      {
+        if (this->Cells[static_cast<std::size_t>(cellId)].zone == this->CellZones[location])
+        {
+          this->CellIndicesByZone[location].push_back(cellId);
+          break;
+        }
+      }
+    }
+  }
+#if !defined(NDEBUG)
+  const auto udm0 = std::chrono::steady_clock::now();
+#endif
   for (std::size_t location = 0; location < this->CellZones.size(); location++)
   {
     for (std::size_t dim = 0; dim < dataChunk.dim; dim++)
     {
       vtkNew<vtkDoubleArray> doubleArray;
       doubleArray->SetNumberOfComponents(1);
+      const std::vector<vtkIdType>& zoneCellIndices = this->CellIndicesByZone[location];
+      const std::size_t tupleCapacity = dataChunk.dataVector.size() / dataChunk.dim;
       vtkIdType valueCount = 0;
-      for (std::size_t idxCell = 0; idxCell < dataChunk.dataVector.size() / dataChunk.dim;
-           idxCell++)
+      for (vtkIdType cellId : zoneCellIndices)
       {
-        if (this->Cells[idxCell].zone == this->CellZones[location])
+        if (cellId >= 0 && static_cast<std::size_t>(cellId) < tupleCapacity)
         {
           ++valueCount;
         }
@@ -374,11 +522,11 @@ void vtkFLUENTCFFReader::ParseUDMData(
       double* valuePtr = doubleArray->WritePointer(0, valueCount);
       vtkIdType valueOffset = 0;
 
-      for (std::size_t idxCell = 0; idxCell < dataChunk.dataVector.size() / dataChunk.dim;
-           idxCell++)
+      for (vtkIdType cellId : zoneCellIndices)
       {
-        if (this->Cells[idxCell].zone == this->CellZones[location])
+        if (cellId >= 0 && static_cast<std::size_t>(cellId) < tupleCapacity)
         {
+          const std::size_t idxCell = static_cast<std::size_t>(cellId);
           valuePtr[valueOffset++] = dataChunk.dataVector[dim + dataChunk.dim * idxCell];
         }
       }
@@ -386,6 +534,15 @@ void vtkFLUENTCFFReader::ParseUDMData(
       grid[location]->GetCellData()->AddArray(doubleArray);
     }
   }
+#if !defined(NDEBUG)
+  {
+    const auto ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - udm0)
+        .count();
+    FluentCffDebugLog(
+      "ParseUDMData chunk=\"" + dataChunk.variableName + "\" " + std::to_string(ms) + " ms");
+  }
+#endif
 }
 
 //------------------------------------------------------------------------------
@@ -720,6 +877,22 @@ int vtkFLUENTCFFReader::GetFaceIdByZoneName(const char* name, vtkIdType localFac
 }
 
 //------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetCellZoneCount() const
+{
+  return static_cast<int>(this->CellZones.size());
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetCellZoneIdAtIndex(int index) const
+{
+  if (index < 0 || static_cast<std::size_t>(index) >= this->CellZones.size())
+  {
+    return -1;
+  }
+  return this->CellZones[static_cast<std::size_t>(index)];
+}
+
+//------------------------------------------------------------------------------
 vtkIdType vtkFLUENTCFFReader::GetNumberOfNodesRead() const
 {
   return this->Points->GetNumberOfPoints();
@@ -914,44 +1087,86 @@ double vtkFLUENTCFFReader::GetFaceArrayValue(const char* name, vtkIdType faceId,
 }
 
 //------------------------------------------------------------------------------
-vtkSmartPointer<vtkPolyData> vtkFLUENTCFFReader::CreateFaceZonePolyData(
-  const char* zoneName, const char* faceArrayName, int component) const
+int vtkFLUENTCFFReader::GetFaceZoneIndicesOverlappingFaceArray(
+  const char* faceArrayName, vtkIntArray* outZoneIndices) const
 {
-  vtkSmartPointer<vtkPolyData> polyData = vtkSmartPointer<vtkPolyData>::New();
-  const int zoneIndex = this->GetFaceZoneIndexByName(zoneName);
-  if (zoneIndex < 0)
+  if (!faceArrayName || !outZoneIndices)
   {
-    return polyData;
+    return -1;
   }
-
-  const auto& info = this->FaceZones[static_cast<std::size_t>(zoneIndex)];
-  vtkNew<vtkCellArray> polys;
-  vtkNew<vtkDoubleArray> scalars;
-  if (faceArrayName)
+  outZoneIndices->Initialize();
+  outZoneIndices->SetNumberOfComponents(1);
+  const DataChunk* chunk = this->FindDataChunk(this->FaceDataChunks, faceArrayName);
+  if (!chunk)
   {
-    scalars->SetName(faceArrayName);
-    scalars->SetNumberOfComponents(1);
-    vtkIdType scalarCount = 0;
-    for (vtkIdType faceId = info.firstFaceId; faceId <= info.lastFaceId; ++faceId)
+    return -1;
+  }
+  if (chunk->FaceSectionFluentIdRanges1Based.empty())
+  {
+    vtkWarningMacro(<< "Face array \"" << faceArrayName << "\" has no stored section id ranges; call Update() after upgrading reader.");
+    return 0;
+  }
+  std::vector<int> hits;
+  for (std::size_t zi = 0; zi < this->FaceZones.size(); ++zi)
+  {
+    const auto& fz = this->FaceZones[zi];
+    if (fz.firstFaceId < 0 || fz.lastFaceId < fz.firstFaceId)
     {
-      if (faceId >= 0 && static_cast<std::size_t>(faceId) < this->Faces.size() &&
-        this->Faces[static_cast<std::size_t>(faceId)].nodes.size() >= 3)
+      continue;
+    }
+    const std::uint64_t zMin = static_cast<std::uint64_t>(fz.firstFaceId + 1);
+    const std::uint64_t zMax = static_cast<std::uint64_t>(fz.lastFaceId + 1);
+    bool overlap = false;
+    for (const auto& sec : chunk->FaceSectionFluentIdRanges1Based)
+    {
+      if (std::max(sec.first, zMin) <= std::min(sec.second, zMax))
       {
-        ++scalarCount;
+        overlap = true;
+        break;
       }
     }
-    scalars->WritePointer(0, scalarCount);
+    if (overlap)
+    {
+      hits.push_back(static_cast<int>(zi));
+    }
   }
-  double* scalarPtr = faceArrayName ? scalars->GetPointer(0) : nullptr;
-  vtkIdType scalarOffset = 0;
+  std::sort(hits.begin(), hits.end());
+  for (int v : hits)
+  {
+    outZoneIndices->InsertNextValue(v);
+  }
+  return static_cast<int>(hits.size());
+}
 
+//------------------------------------------------------------------------------
+void vtkFLUENTCFFReader::EnsureFaceZoneTopologyCache(int zoneIndex) const
+{
+  if (zoneIndex < 0 || static_cast<std::size_t>(zoneIndex) >= this->FaceZones.size())
+  {
+    return;
+  }
+
+  if (this->FaceZoneTopologyCaches.size() != this->FaceZones.size())
+  {
+    this->FaceZoneTopologyCaches.clear();
+    this->FaceZoneTopologyCaches.resize(this->FaceZones.size());
+  }
+
+  FaceZoneTopologyCache& cache = this->FaceZoneTopologyCaches[static_cast<std::size_t>(zoneIndex)];
+  if (cache.Built && cache.Polys)
+  {
+    return;
+  }
+
+  cache.FaceIds.clear();
+  vtkNew<vtkCellArray> polys;
+  const auto& info = this->FaceZones[static_cast<std::size_t>(zoneIndex)];
   for (vtkIdType faceId = info.firstFaceId; faceId <= info.lastFaceId; ++faceId)
   {
     if (faceId < 0 || static_cast<std::size_t>(faceId) >= this->Faces.size())
     {
       continue;
     }
-
     const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
     if (face.nodes.size() < 3)
     {
@@ -965,15 +1180,55 @@ vtkSmartPointer<vtkPolyData> vtkFLUENTCFFReader::CreateFaceZonePolyData(
       polygon->GetPointIds()->SetId(static_cast<vtkIdType>(i), face.nodes[i]);
     }
     polys->InsertNextCell(polygon);
+    cache.FaceIds.push_back(faceId);
+  }
 
+  cache.Polys = polys;
+  cache.Built = true;
+}
+
+//------------------------------------------------------------------------------
+vtkSmartPointer<vtkPolyData> vtkFLUENTCFFReader::CreateFaceZonePolyData(
+  const char* zoneName, const char* faceArrayName, int component) const
+{
+  vtkSmartPointer<vtkPolyData> polyData = vtkSmartPointer<vtkPolyData>::New();
+  const int zoneIndex = this->GetFaceZoneIndexByName(zoneName);
+  if (zoneIndex < 0)
+  {
+    return polyData;
+  }
+
+  this->EnsureFaceZoneTopologyCache(zoneIndex);
+  const FaceZoneTopologyCache& cache =
+    this->FaceZoneTopologyCaches[static_cast<std::size_t>(zoneIndex)];
+
+  vtkNew<vtkDoubleArray> scalars;
+  if (faceArrayName)
+  {
+    scalars->SetName(faceArrayName);
+    scalars->SetNumberOfComponents(1);
+    scalars->WritePointer(0, static_cast<vtkIdType>(cache.FaceIds.size()));
+  }
+  double* scalarPtr = faceArrayName ? scalars->GetPointer(0) : nullptr;
+  vtkIdType scalarOffset = 0;
+
+#if !defined(NDEBUG)
+  const auto faceZonePoly0 = std::chrono::steady_clock::now();
+#endif
+  for (vtkIdType faceId : cache.FaceIds)
+  {
     if (faceArrayName)
     {
       scalarPtr[scalarOffset++] = this->GetFaceArrayValue(faceArrayName, faceId, component);
     }
   }
+#if !defined(NDEBUG)
+  FluentCffDebugPrintMs(
+    "CreateFaceZonePolyData polys + vtkDoubleArray face scalars (GetFaceArrayValue)", faceZonePoly0);
+#endif
 
   polyData->SetPoints(this->Points);
-  polyData->SetPolys(polys);
+  polyData->SetPolys(cache.Polys);
   if (faceArrayName)
   {
     polyData->GetCellData()->SetScalars(scalars);
@@ -1096,10 +1351,16 @@ void vtkFLUENTCFFReader::GetNodesGlobal()
   CHECK_HDF(H5Aread(attr, H5T_NATIVE_UINT64, &lastIndex));
   CHECK_HDF(H5Aclose(attr));
   CHECK_HDF(H5Gclose(group));
+#if !defined(NDEBUG)
+  const auto gng0 = std::chrono::steady_clock::now();
+#endif
   vtkNew<vtkDoubleArray> coordinates;
   coordinates->SetNumberOfComponents(3);
   coordinates->WritePointer(0, static_cast<vtkIdType>(lastIndex) * 3);
   this->Points->SetData(coordinates);
+#if !defined(NDEBUG)
+  FluentCffDebugPrintMs("GetNodesGlobal vtkDoubleArray WritePointer + Points::SetData", gng0);
+#endif
 }
 
 //------------------------------------------------------------------------------
@@ -1172,6 +1433,10 @@ void vtkFLUENTCFFReader::GetNodes()
   CHECK_HDF(H5Dread(dset, H5T_NATIVE_UINT64, H5S_ALL, H5S_ALL, H5P_DEFAULT, dimension.data()));
   CHECK_HDF(H5Dclose(dset));
 
+#if !defined(NDEBUG)
+  std::chrono::steady_clock::duration getNodesPointWriteDuration{};
+#endif
+
   for (uint64_t iZone = 0; iZone < nZones; iZone++)
   {
     uint64_t coords_minId, coords_maxId;
@@ -1228,6 +1493,9 @@ void vtkFLUENTCFFReader::GetNodes()
       throw std::runtime_error("Unable to access vtkPoints storage (GetNodes).");
     }
 
+#if !defined(NDEBUG)
+    const auto pointWriteStep0 = std::chrono::steady_clock::now();
+#endif
     if (this->GridDimension == 3)
     {
       for (unsigned int i = firstIndex; i <= lastIndex; i++)
@@ -1248,7 +1516,19 @@ void vtkFLUENTCFFReader::GetNodes()
         pointPtr[pointIndex + 2] = 0.0;
       }
     }
+#if !defined(NDEBUG)
+    getNodesPointWriteDuration += (std::chrono::steady_clock::now() - pointWriteStep0);
+#endif
   }
+
+#if !defined(NDEBUG)
+  {
+    const auto ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(getNodesPointWriteDuration).count();
+    FluentCffDebugLog(
+      "GetNodes vtkPoints underlying double buffer fill " + std::to_string(ms) + " ms");
+  }
+#endif
 
   CHECK_HDF(H5Gclose(group));
 }
@@ -1279,6 +1559,14 @@ void vtkFLUENTCFFReader::GetCellsGlobal()
   CHECK_HDF(H5Aclose(attr));
   CHECK_HDF(H5Gclose(group));
   this->Cells.resize(lastIndex);
+  // Pre-size commonly used per-cell connectivity vectors to reduce reallocations.
+  for (auto& cell : this->Cells)
+  {
+    cell.faces.reserve(6);
+    cell.nodes.reserve(8);
+    cell.nodesOffset.reserve(8);
+    cell.childId.reserve(4);
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -1489,6 +1777,11 @@ void vtkFLUENTCFFReader::GetFacesGlobal()
   CHECK_HDF(H5Aclose(attr));
   CHECK_HDF(H5Gclose(group));
   this->Faces.resize(lastIndex);
+  // Most faces are tri/quad; reserve a small continuous buffer up front.
+  for (auto& face : this->Faces)
+  {
+    face.nodes.reserve(4);
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -1606,6 +1899,7 @@ void vtkFLUENTCFFReader::GetFaces()
   CHECK_HDF(H5Dread(dset, H5T_NATIVE_INT32, H5S_ALL, H5S_ALL, H5P_DEFAULT, flags.data()));
   CHECK_HDF(H5Dclose(dset));
 
+  this->FaceZones.reserve(this->FaceZones.size() + static_cast<std::size_t>(nZones));
   for (uint64_t iZone = 0; iZone < nZones; iZone++)
   {
     unsigned int zoneId = static_cast<unsigned int>(Id[iZone]);
@@ -2944,7 +3238,9 @@ int vtkFLUENTCFFReader::ReadMetadataForType(const std::string& groupName,
   std::string str(strchar);
   delete[] strchar;
 
-  for (auto fieldName : SplitFieldNames(str))
+  std::vector<std::string> fieldNames = SplitFieldNames(str);
+  preReadData.reserve(preReadData.size() + fieldNames.size());
+  for (auto fieldName : fieldNames)
   {
     hid_t groupdata = H5Gopen(group, fieldName.c_str(), H5P_DEFAULT);
     if (groupdata < 0)
@@ -3022,7 +3318,9 @@ int vtkFLUENTCFFReader::ReadDataForType(const std::string& groupName,
   std::string str(strchar);
   delete[] strchar;
 
-  for (auto originalFieldName : SplitFieldNames(str))
+  std::vector<std::string> fieldNames = SplitFieldNames(str);
+  chunks.reserve(chunks.size() + fieldNames.size());
+  for (auto originalFieldName : fieldNames)
   {
     hid_t groupdata = H5Gopen(group, originalFieldName.c_str(), H5P_DEFAULT);
     if (groupdata < 0)
@@ -3059,6 +3357,8 @@ int vtkFLUENTCFFReader::ReadDataForType(const std::string& groupName,
       chunk.variableName = selectedName;
       chunk.dim = 0;
 
+      std::vector<double> sectionData;
+      std::vector<float> sectionDataf;
       for (uint64_t iSection = 0; iSection < nSections; iSection++)
       {
         dset = H5Dopen(groupdata, std::to_string(iSection + 1).c_str(), H5P_DEFAULT);
@@ -3110,18 +3410,20 @@ int vtkFLUENTCFFReader::ReadDataForType(const std::string& groupName,
         }
         CHECK_HDF(H5Tclose(type));
 
-        std::vector<double> data(totalDim);
+        sectionData.resize(static_cast<std::size_t>(totalDim));
         if (typePrec == 0)
         {
-          CHECK_HDF(H5Dread(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data.data()));
+          CHECK_HDF(H5Dread(
+            dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, sectionData.data()));
         }
         else
         {
-          std::vector<float> dataf(totalDim);
-          CHECK_HDF(H5Dread(dset, H5T_NATIVE_FLOAT, H5S_ALL, H5S_ALL, H5P_DEFAULT, dataf.data()));
+          sectionDataf.resize(static_cast<std::size_t>(totalDim));
+          CHECK_HDF(
+            H5Dread(dset, H5T_NATIVE_FLOAT, H5S_ALL, H5S_ALL, H5P_DEFAULT, sectionDataf.data()));
           for (std::size_t j = 0; j < totalDim; j++)
           {
-            data[j] = static_cast<double>(dataf[j]);
+            sectionData[j] = static_cast<double>(sectionDataf[j]);
           }
         }
 
@@ -3164,8 +3466,13 @@ int vtkFLUENTCFFReader::ReadDataForType(const std::string& groupName,
           for (int k = 0; k < numberOfComponents; k++)
           {
             chunk.dataVector[tupleIndex * chunk.dim + static_cast<std::size_t>(k)] =
-              data[k * (maxId - minId + 1) + (j - minId)];
+              sectionData[k * (maxId - minId + 1) + (j - minId)];
           }
+        }
+
+        if (groupName == "faces")
+        {
+          chunk.FaceSectionFluentIdRanges1Based.emplace_back(minId, maxId);
         }
 
         CHECK_HDF(H5Sclose(space));

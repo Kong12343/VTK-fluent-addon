@@ -1,0 +1,34 @@
+---
+description: Maintain cross-window task summaries in HISTORY.md before and after commands
+alwaysApply: true
+---
+
+# HISTORY Cross-Window Sync
+
+## Goal
+
+Keep `HISTORY.md` as a shared handoff log between windows.
+
+## Required Workflow
+
+1. Before running any command, read `HISTORY.md` and review summaries written by other windows.
+2. After finishing command execution, append a new summary section to `HISTORY.md`.
+3. The appended section title must use the current window name and include a timestamp.
+4. The summary must briefly cover: objective, actions taken, result status, and next step.
+
+## Suggested Append Format
+
+Use this structure when writing:
+
+```markdown
+## <Window Name> - <YYYY-MM-DD HH:mm:ss>
+- Objective: ...
+- Actions: ...
+- Result: ...
+- Next: ...
+```
+
+## Notes
+
+- Never overwrite existing history records; only append.
+- Keep each summary concise and task-oriented.

@@ -35,7 +35,10 @@
 #ifndef vtkFLUENTCFFReader_h
 #define vtkFLUENTCFFReader_h
 
-#include <memory> // std::unique_ptr
+#include <cstdint> // std::uint64_t
+#include <memory>  // std::unique_ptr
+#include <utility> // std::pair
+#include <vector>
 
 #include "vtkIOFLUENTCFFModule.h" // For export macro
 
@@ -45,6 +48,8 @@
 
 VTK_ABI_NAMESPACE_BEGIN
 class vtkDataArraySelection;
+class vtkIntArray;
+class vtkCellArray;
 class vtkPoints;
 class vtkTriangle;
 class vtkTetra;
@@ -164,6 +169,16 @@ public:
   vtkIdType GetFaceZoneSizeByName(const char* name) const;
   int GetFaceIdByZoneName(const char* name, vtkIdType localFaceIndex) const;
 
+  /**
+   * Number of cell-zone blocks in the multiblock output (same as CellZones.size() after Update).
+   */
+  int GetCellZoneCount() const;
+
+  /**
+   * Fluent cell zone id for output block index \p index (0 <= index < GetCellZoneCount()).
+   */
+  int GetCellZoneIdAtIndex(int index) const;
+
   int GetCellType(vtkIdType cellId) const;
   int GetCellZoneId(vtkIdType cellId) const;
   vtkIdType GetCellNumberOfFaces(vtkIdType cellId) const;
@@ -187,6 +202,18 @@ public:
 
   vtkSmartPointer<vtkPolyData> CreateFaceZonePolyData(const char* zoneName,
     const char* faceArrayName = nullptr, int component = 0) const;
+
+  /**
+   * After Update() with a face array loaded, return face zone indices (0..GetNumberOfFaceZones()-1)
+   * whose Fluent global face id range intersects any HDF5 section stored for \p faceArrayName.
+   *
+   * \param faceArrayName  Must match the loaded array name (GetFaceArrayName), including
+   * RenameArrays renames and multi-phase suffix (e.g. SV_P-phase_1 for the second phase).
+   * \param outZoneIndices  Cleared and filled with zone indices (sorted by increasing index).
+   * \return Number of overlapping zones, or -1 if \p faceArrayName / \p outZoneIndices is null or
+   * the array is unknown.
+   */
+  int GetFaceZoneIndicesOverlappingFaceArray(const char* faceArrayName, vtkIntArray* outZoneIndices) const;
 
   //@{
   //
@@ -405,6 +432,8 @@ private:
     std::string variableName;
     size_t dim;
     std::vector<double> dataVector;
+    /** Populated for face arrays: Fluent 1-based inclusive id range per HDF5 section. */
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> FaceSectionFluentIdRanges1Based;
   };
 
   int ReadMetadataForType(const std::string& groupName, vtkDataArraySelection* selection,
@@ -412,12 +441,22 @@ private:
   int ReadDataForType(const std::string& groupName, vtkDataArraySelection* selection,
     std::vector<DataChunk>& chunks, vtkIdType tupleCount, int phaseIndex);
   const DataChunk* FindDataChunk(const std::vector<DataChunk>& chunks, const char* name) const;
+  void EnsureFaceZoneTopologyCache(int zoneIndex) const;
 
   std::vector<DataChunk> CellDataChunks;
   std::vector<DataChunk> FaceDataChunks;
   std::vector<std::string> PreReadCellData;
   std::vector<std::string> PreReadFaceData;
   int NumberOfArrays = 0;
+  std::vector<std::vector<vtkIdType>> CellIndicesByZone;
+
+  struct FaceZoneTopologyCache
+  {
+    bool Built = false;
+    vtkSmartPointer<vtkCellArray> Polys;
+    std::vector<vtkIdType> FaceIds;
+  };
+  mutable std::vector<FaceZoneTopologyCache> FaceZoneTopologyCaches;
 
   /**
    * UDM arrays of N components must be split in N scalar arrays
