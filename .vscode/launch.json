@@ -1,0 +1,58 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug current file (clang++)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}\\examples\\FluentCFFZoneViewer\\build-msys2-clang\\${fileBasenameNoExtension}.manual.exe",
+      "args": [],
+      "stopAtEntry": true,
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "PATH",
+          "value": "C:\\tools\\msys64\\mingw64\\bin;C:\\ProgramData\\anaconda3\\Library\\bin;${env:PATH}"
+        }
+      ],
+      // "externalConsole": true,
+    "launchCompleteCommand": "exec-run",
+
+      "MIMode": "gdb",
+      "miDebuggerPath": "C:\\tools\\msys64\\mingw64\\bin\\gdb.exe",
+      "miDebuggerArgs": "-q",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
+        {
+          "description": "Auto-load shared library symbols",
+          "text": "set ",
+          "ignoreFailures": true
+        }
+      ],
+      // "sourceFileMap": {
+        // "/c/Users/20968/projects/ai/gnn": "F:\\Users\\20968\\projects\\ai\\gnn",
+        // "F:/Users/20968/projects/ai/gnn": "F:\\Users\\20968\\projects\\ai\\gnn",
+        // "F:\\Users\\20968\\projects\\ai\\gnn": "F:\\Users\\20968\\projects\\ai\\gnn"
+      // },
+      "preLaunchTask": "clang++ build current file"
+    }
+    ,{
+      "name": "Debug By Cmake",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "",
+      "args": [
+      ],
+      "cwd": "${workspaceFolder}",
+      // "env": {
+        // 移除HDF5库路径，使用系统库
+        // "LD_LIBRARY_PATH": "${config:prj.hdf5Root}/lib:${env:LD_LIBRARY_PATH}"
+      // },
+      "preLaunchTask": "CMake: Build All"
+    },
+  ]
+}

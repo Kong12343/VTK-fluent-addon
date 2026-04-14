@@ -1,0 +1,25 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/vtk/IO/FLUENTCFF",
+                "C:/tools/msys64/mingw64/include/**",
+                "C:/tools/msys64/mingw64/lib/cmake/vtk",
+                "C:/tools/msys64/mingw64/lib/cmake/Qt6",
+                "C:/tools/msys64/mingw64/lib/cmake/Qt6Widgets"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "compilerPath": "C:/tools/msys64/mingw64/bin/clang++.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-clang-x64"
+        }
+    ],
+    "version": 4
+}
