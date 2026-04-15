@@ -39,6 +39,7 @@
 #include "vtk_hdf5.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstring>
 #include <limits>
@@ -321,8 +322,6 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     this->FileState = DataState::LOADED;
   }
 
-  // Transfer structures for VTK polyhedron cells
-  vtkNew<vtkCellArray> faces;
   // Convert Fluent format to VTK
   this->NumberOfCells = static_cast<vtkIdType>(this->Cells.size());
 
@@ -378,28 +377,13 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
 #if !defined(NDEBUG)
   std::chrono::steady_clock::duration polyhedronWriteDuration{};
   std::chrono::steady_clock::duration polyhedronBufferPrepDuration{};
-  std::chrono::steady_clock::duration polyhedronNodeCopyDuration{};
-  std::chrono::steady_clock::duration polyhedronOffsetCopyDuration{};
   std::chrono::steady_clock::duration polyhedronUniqueSelectDuration{};
-  std::chrono::steady_clock::duration polyhedronSetDataDuration{};
   vtkIdType polyhedronCellCount = 0;
   std::chrono::steady_clock::duration nonPolyCellInsertDuration{};
   vtkIdType nonPolyCellCount = 0;
   const auto cellLoopTotal0 = std::chrono::steady_clock::now();
 #endif
-  vtkNew<vtkIdTypeArray> polyNodes;
-  vtkNew<vtkIdTypeArray> polyNodeOffsets;
-  polyNodes->SetNumberOfComponents(1);
-  polyNodeOffsets->SetNumberOfComponents(1);
-  vtkIdType polyNodeCapacity = 0;
-  vtkIdType polyNodeOffsetCapacity = 0;
-#if !defined(NDEBUG)
-  const auto polySetData0 = std::chrono::steady_clock::now();
-#endif
-  faces->SetData(polyNodeOffsets, polyNodes);
-#if !defined(NDEBUG)
-  polyhedronSetDataDuration += (std::chrono::steady_clock::now() - polySetData0);
-#endif
+  std::vector<vtkIdType> faceStream;
   std::vector<vtkIdType> uniquePointIds;
   std::vector<int> pointVisitStamp;
   pointVisitStamp.resize(static_cast<std::size_t>(this->Points->GetNumberOfPoints()), -1);
@@ -542,53 +526,21 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
 #if !defined(NDEBUG)
       const auto polyBuffer0 = std::chrono::steady_clock::now();
 #endif
-      const vtkIdType nodeTupleCount = static_cast<vtkIdType>(cellNodeCount);
-      if (nodeTupleCount > polyNodeCapacity)
+      const vtkIdType nFaces = static_cast<vtkIdType>(cellNodeOffsetCount - 1);
+      faceStream.clear();
+      faceStream.reserve(cellNodeCount + static_cast<std::size_t>(nFaces));
+      for (vtkIdType f = 0; f < nFaces; ++f)
       {
-        polyNodes->WritePointer(0, nodeTupleCount);
-        polyNodeCapacity = nodeTupleCount;
+        const vtkIdType fStart = static_cast<vtkIdType>(cellNodeOffsets[f]);
+        const vtkIdType fEnd = static_cast<vtkIdType>(cellNodeOffsets[f + 1]);
+        faceStream.push_back(fEnd - fStart);
+        for (vtkIdType k = fStart; k < fEnd; ++k)
+        {
+          faceStream.push_back(static_cast<vtkIdType>(cellNodes[k]));
+        }
       }
-      else
-      {
-        polyNodes->SetNumberOfValues(nodeTupleCount);
-      }
-      vtkIdType* nodePtr = polyNodes->GetPointer(0);
-#if !defined(NDEBUG)
-      const auto polyNodeCopy0 = std::chrono::steady_clock::now();
-#endif
-      for (std::size_t j = 0; j < cellNodeCount; ++j)
-      {
-        nodePtr[j] = static_cast<vtkIdType>(cellNodes[j]);
-      }
-#if !defined(NDEBUG)
-      polyhedronNodeCopyDuration += (std::chrono::steady_clock::now() - polyNodeCopy0);
-#endif
-      const vtkIdType nodeOffsetTupleCount = static_cast<vtkIdType>(cellNodeOffsetCount);
-      if (nodeOffsetTupleCount > polyNodeOffsetCapacity)
-      {
-        polyNodeOffsets->WritePointer(0, nodeOffsetTupleCount);
-        polyNodeOffsetCapacity = nodeOffsetTupleCount;
-      }
-      else
-      {
-        polyNodeOffsets->SetNumberOfValues(nodeOffsetTupleCount);
-      }
-      vtkIdType* nodeOffsetPtr = polyNodeOffsets->GetPointer(0);
-#if !defined(NDEBUG)
-      const auto polyOffsetCopy0 = std::chrono::steady_clock::now();
-#endif
-      for (std::size_t j = 0; j < cellNodeOffsetCount; ++j)
-      {
-        nodeOffsetPtr[j] = static_cast<vtkIdType>(cellNodeOffsets[j]);
-      }
-#if !defined(NDEBUG)
-      polyhedronOffsetCopyDuration += (std::chrono::steady_clock::now() - polyOffsetCopy0);
-#endif
 #if !defined(NDEBUG)
       polyhedronBufferPrepDuration += (std::chrono::steady_clock::now() - polyBuffer0);
-#endif
-
-#if !defined(NDEBUG)
       const auto polyUnique0 = std::chrono::steady_clock::now();
 #endif
       const vtkIdType* uniqueNodeIds = nullptr;
@@ -630,8 +582,8 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
       polyhedronUniqueSelectDuration += (std::chrono::steady_clock::now() - polyUnique0);
 #endif
 
-      grid[location]->InsertNextCell(
-        VTK_POLYHEDRON, uniqueNodeCount, uniqueNodeIds, faces);
+      grid[location]->InsertNextCell(VTK_POLYHEDRON, uniqueNodeCount, uniqueNodeIds,
+        nFaces, faceStream.data());
 #if !defined(NDEBUG)
       polyhedronWriteDuration += (std::chrono::steady_clock::now() - polyhedronStep0);
       ++polyhedronCellCount;
@@ -645,23 +597,14 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronWriteDuration)
                       .count();
     FluentCffDebugLog(
-      "polyhedron vtkIdTypeArray WritePointer + VTK_POLYHEDRON InsertNextCell total cells=" +
+      "polyhedron InsertNextCell(faceStream) total cells=" +
       std::to_string(polyhedronCellCount) + " " + std::to_string(ms) + " ms");
     const auto prepMs =
       std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronBufferPrepDuration).count();
-    const auto nodeCopyMs =
-      std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronNodeCopyDuration).count();
-    const auto offsetCopyMs =
-      std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronOffsetCopyDuration).count();
     const auto uniqueSelectMs =
       std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronUniqueSelectDuration).count();
-    const auto setDataMs =
-      std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronSetDataDuration).count();
-    FluentCffDebugLog("polyhedron buffer prepare " + std::to_string(prepMs) +
-      " ms; faces->SetData " + std::to_string(setDataMs) + " ms");
-    FluentCffDebugLog("polyhedron node copy " + std::to_string(nodeCopyMs) +
-      " ms; offset copy " + std::to_string(offsetCopyMs) + " ms; unique select " +
-      std::to_string(uniqueSelectMs) + " ms");
+    FluentCffDebugLog("polyhedron faceStream build " + std::to_string(prepMs) +
+      " ms; unique select " + std::to_string(uniqueSelectMs) + " ms");
   }
   if (nonPolyCellCount > 0)
   {
@@ -674,6 +617,32 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - cellLoopTotal0).count();
     FluentCffDebugLog("cell loop total (poly+non-poly+mapping) " + std::to_string(ms) + " ms");
+  }
+  for (std::size_t loc = 0; loc < this->CellZones.size(); ++loc)
+  {
+    vtkIdType nCells = grid[loc]->GetNumberOfCells();
+    std::string typeHist;
+    if (nCells > 0)
+    {
+      std::array<vtkIdType, 16> typeCounts{};
+      for (vtkIdType ci = 0; ci < nCells; ++ci)
+      {
+        int ct = grid[loc]->GetCellType(ci);
+        if (ct >= 0 && ct < 16)
+          typeCounts[static_cast<std::size_t>(ct)]++;
+        else
+          typeCounts[15]++;
+      }
+      for (int t = 0; t < 16; ++t)
+      {
+        if (typeCounts[static_cast<std::size_t>(t)] > 0)
+          typeHist += " type" + std::to_string(t) + "=" +
+            std::to_string(typeCounts[static_cast<std::size_t>(t)]);
+      }
+    }
+    FluentCffDebugLog("Zone[" + std::to_string(loc) + "] zoneId=" +
+      std::to_string(this->CellZones[loc]) + " cells=" + std::to_string(nCells) +
+      " points=" + std::to_string(grid[loc]->GetNumberOfPoints()) + typeHist);
   }
 #endif
 

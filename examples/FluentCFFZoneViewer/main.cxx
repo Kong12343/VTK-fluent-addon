@@ -38,6 +38,7 @@
 #include <vtkUnstructuredGrid.h>
 
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <cmath>
 #include <cstdlib>
@@ -435,8 +436,27 @@ int main(int argc, char* argv[])
 
       mapper->SetInputData(ug);
 #if !defined(NDEBUG)
-      ViewerDebugLog(
-        "Cell zone block " + std::to_string(blockIndex) + " cells " + std::to_string(ug->GetNumberOfCells()));
+      {
+        vtkIdType nCells = ug->GetNumberOfCells();
+        vtkIdType nPts = ug->GetNumberOfPoints();
+        std::string info = "Cell zone block " + std::to_string(blockIndex) +
+          " cells=" + std::to_string(nCells) +
+          " points=" + std::to_string(nPts);
+        if (nCells > 0 && nCells <= 500000)
+        {
+          std::array<vtkIdType, 16> tc{};
+          for (vtkIdType ci = 0; ci < nCells; ++ci)
+          {
+            int ct = ug->GetCellType(ci);
+            if (ct >= 0 && ct < 16) tc[static_cast<std::size_t>(ct)]++;
+            else tc[15]++;
+          }
+          for (int t = 0; t < 16; ++t)
+            if (tc[static_cast<std::size_t>(t)] > 0)
+              info += " VTK_" + std::to_string(t) + "=" + std::to_string(tc[static_cast<std::size_t>(t)]);
+        }
+        ViewerDebugLog(info);
+      }
 #endif
       ApplyColorRange(ug, mapper, fieldName);
     }

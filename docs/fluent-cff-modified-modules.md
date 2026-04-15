@@ -2,17 +2,36 @@
 
 ## 1. 本次改动涉及的模块
 
-本轮实际修改了三个文件：
+这份文档覆盖的是“为让 `FluentCFFZoneViewer` 在当前工具链下可构建、可验证、可持续优化”的一组改动。它们大致可以分为两类：
+
+### 1.1 阶段 A：构建/链接兼容（解决模板符号缺失）
+
+核心目标不是功能扩展，而是：
+
+- 规避 MSYS2 预编译 VTK 下 `vtkAOSDataArrayTemplate<T>::SetValue` 模板符号缺失导致的链接错误
+- **保持对外行为与语义一致**（Fluent CFF 的拓扑解释与结果字段含义不变）
+- 让 `FluentCFFZoneViewer` 能在当前工具链下完成构建
+
+主要涉及文件：
 
 - [vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx)
 - [CMakeLists.txt](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/CMakeLists.txt)
 - [vtkAOSDataArrayTemplateInstantiate.cxx](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/vtkAOSDataArrayTemplateInstantiate.cxx)
 
-改动的核心目标不是功能扩展，而是：
+### 1.2 阶段 B：reader 性能/结构优化（减少重复遍历与分配）
 
-- 规避 MSYS2 预编译 VTK 下 `vtkAOSDataArrayTemplate<T>::SetValue` 模板符号缺失导致的链接错误
-- 保持 Fluent CFF 拓扑和数据读取逻辑不变
-- 让 `FluentCFFZoneViewer` 能在当前工具链下完成构建
+在可构建基础上，后续优化主要集中在 `vtkFLUENTCFFReader` 的热路径（解析、拓扑重建、字段注入）上，通过缓存/池化/批量写入等手段降低重复扫描与临时分配，尽量缩短 `Update` 和字段切换耗时。
+
+主要涉及文件（概览）：
+
+- [vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx)
+- [vtkFLUENTCFFReader.h](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.h)
+- 性能验证流程（可复现实验/采样脚本）：
+  - [perf-opt/README.md](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/README.md)
+  - [perf-opt/build-debug.ps1](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/build-debug.ps1)
+  - [perf-opt/run-v21.ps1](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/run-v21.ps1)
+  - [perf-opt/collect-log.ps1](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/collect-log.ps1)
+  - [perf-opt/baseline-notes.md](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/baseline-notes.md)
 
 ## 2. `vtkFLUENTCFFReader.cxx` 的改动
 

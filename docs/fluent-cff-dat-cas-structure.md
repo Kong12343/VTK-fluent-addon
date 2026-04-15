@@ -222,13 +222,16 @@ Reader 读取：
 
 ### 3.5 特殊拓扑
 
-基本拓扑后还会尝试读取：
+在 Fluent CFF 的 `.cas.h5` 中，除了 nodes/cells/faces 这条主拓扑链路外，还可能存在一些“拓扑关系/特殊标记”类数据集（例如 tree/AMR 关系、接口/周期/NCG 等）。
 
-- `/meshes/1/cells/tree`
-- `/meshes/1/faces/tree`
-- 其他特殊拓扑信息
+需要注意的是：**当前本项目的 reader 已不再解析或依赖** `/meshes/1/cells/tree`、`/meshes/1/faces/tree` 这类 tree 数据集；几何重建与结果注入仍完全基于：
 
-入口在 `ParseCaseFile()`：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1012)
+- `/meshes/1/nodes/*`
+- `/meshes/1/cells/*`
+- `/meshes/1/faces/*`
+- `/results/1/phase-N/{cells|faces}/*`
+
+如需追踪 reader 的拓扑解析入口，仍以 `ParseCaseFile()` 为准：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1012)
 
 ## 4. 拓扑如何变成最终 VTK 单元
 

@@ -162,3 +162,22 @@
   - 阶段五：为每个 zone grid 预分配 Allocate(numCells)；修复重复 reserve。
 - Result: Update 从基线 ~77s（含插桩开销）降至 **33-40s**（多轮采样范围）。各子步骤改善：GetCellsGlobal 2.9s→0.4s；ParseCaseFile 11.7s→8.8s；PopulateCellNodes 7.8s→5.5s；GetData 20.5s→10.9s；cell data chunks 长尾从 200-340ms 降至 21-66ms。
 - Next: 全部 5 阶段计划已完成。后续可进一步优化 GetFaces c0+c1+adjacency（~3.3s）和 polyhedron node copy（~0.6-4.2s 波动大）。
+
+## Current Window - 2026-04-15 23:58:16
+- Objective: 更新 Fluent CFF 文档，使其与当前 reader 状态一致。
+- Actions: 更新 `docs/fluent-cff-dat-cas-structure.md` 的“特殊拓扑”段落，明确当前 reader 不再解析/依赖 `/meshes/1/{cells|faces}/tree`；重构 `docs/fluent-cff-modified-modules.md`，将改动拆为“构建/链接兼容”和“reader 性能/结构优化”两阶段，并补充 `perf-opt` 流程脚本模块清单。
+- Result: 两份文档已同步到当前代码演进路径，避免“仍会读取 tree”与“只改 3 个文件”的误导性描述。
+- Next: 如需更细粒度，可继续补充阶段 B 的关键优化点索引（例如缓存/内存池/批量 memcpy 的对应函数入口）。
+
+## Current Window - 2026-04-16 00:06:30
+- Objective: 按用户确认方案 A，默认展示 Cell zone 以直接看到 polyhedron。
+- Actions: 修改 `examples/FluentCFFZoneViewer/main.cxx` 的加载完成逻辑，在填充 topology 前将 `kindCombo` 强制切换到 `Cell zone`，并直接执行 `PopulateCellZones/PopulateCellArrays`；随后运行 `build-debug.ps1` 验证编译。
+- Result: 加载完成后默认进入 cell 渲染路径，不再默认显示 face zone；Debug 构建通过。
+- Next: 如需，我可以继续加一条状态栏提示，明确“当前显示 Cell zone（含 polyhedron）”。
+
+## Cursor - 2026-04-16 01:15:00
+- Objective: fix polyhedron cell not rendering in any cell zone.
+- Actions: (1) reverted main.cxx default-CellZone change; (2) added zone diagnostics; (3) found root cause by diff with original VTK code; (4) moved faces->SetData() back inside polyhedron loop.
+- Root Cause: vtkCellArray::SetData() called only once outside loop; subsequent in-place modifications to underlying arrays left CellArray internal state stale, causing InsertNextCell(VTK_POLYHEDRON) to read incorrect face data.
+- Result: polyhedron rendering restored. Update perf regressed from ~42s to ~62s (+20s per-cell SetData overhead).
+- Next: explore lighter CellArray refresh to recover performance.
