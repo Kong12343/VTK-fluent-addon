@@ -43,3 +43,93 @@
 - Actions: 阅读 `vtkFLUENTCFFReader` 的 `RequestData`、`GetFaces/GetCells`、`Populate*Cell` 相关实现并梳理流程。
 - Result: 明确其核心是“先按 face 拓扑重建 cell 节点顺序，再按 cell 类型调用 `InsertNextCell`”。
 - Next: 向用户给出分步骤说明，并指出 polyhedron 与常规单元的差异。
+
+## Current Window - 2026-04-15 05:52:28
+- Objective: 按已确认方案实现 `examples/FluentCFFZoneViewer/perf-opt` 专用优化流程目录。
+- Actions: 新增 `README.md`、`baseline-notes.md`、`build-debug.ps1`、`run-v21.ps1`、`collect-log.ps1`；执行脚本链路验证并生成日志快照与摘要。
+- Result: 流程可运行，成功输出 `perf-opt-reports` 下的快照与 summary 文件。
+- Next: 在后续每轮优化后复用该流程并将关键结论写入 `baseline-notes.md`。
+
+## Current Window - 2026-04-15 05:58:16
+- Objective: 修复命令行启动时的 DLL/环境变量冲突。
+- Actions: 更新 `perf-opt/run-v21.ps1`，在启动前重排 PATH（`build-msys2-clang` 与 `C:/tools/msys64/mingw64/bin` 优先）并过滤 conda 路径；执行脚本验证。
+- Result: 脚本成功启动 `FluentCFFZoneViewer.exe`，未再复现入口点报错。
+- Next: 如需进一步稳固，可在 `build-debug.ps1` 同步加入相同 PATH 清洗逻辑。
+
+## Current Window - 2026-04-15 06:01:39
+- Objective: 按用户要求“加入并开始优化流程”执行一轮 perf-opt。
+- Actions: 为 `perf-opt/build-debug.ps1` 增加同类 PATH 清洗逻辑；顺序执行 `build-debug.ps1`、`run-v21.ps1 -KillExisting`、`collect-log.ps1`。
+- Result: 流程执行成功，生成新快照 `FluentCFFZoneViewer-debug-20260415-060114.log` 与摘要 `summary-20260415-060114.txt`。
+- Next: 基于该快照提取本轮新增时段指标，写入 `perf-opt/baseline-notes.md` 做迭代对比。
+
+## Current Window - 2026-04-15 06:09:17
+- Objective: 在“自动循环推进”模式下执行新一轮性能迭代。
+- Actions: 优化 `CreateFaceZonePolyData` 标量取值热路径（一次解析 chunk，循环内直接索引）；执行 `perf-opt` 构建、运行、采集全流程。
+- Result: 新快照 `FluentCFFZoneViewer-debug-20260415-060835.log` 显示 `Update` 约 57.7s（相对上一轮约 69.2s 继续下降）；热点 face 字段切换保持毫秒级。
+- Next: 继续迭代 polyhedron 构建路径（减少 type-7 分支临时对象/去重开销）。
+
+## Current Window - 2026-04-15 16:19:37
+- Objective: 继续压缩 face/cell 重建循环，聚焦 polyhedron(type-7) 热路径。
+- Actions: 将 type-7 点去重改为单循环访问标记法（去掉排序去重退化路径），并复用 polyhedron 中间缓冲；执行 perf-opt 全流程复测。
+- Result: 新快照 `FluentCFFZoneViewer-debug-20260415-161858.log` 显示 `polyhedron` 从约 67.6s 回落到约 25.9s，`Update` 从约 84.7s 回落到约 68.8s，恢复到可用区间并保持 face 字段切换毫秒级。
+- Next: 继续推进依赖链可合并的循环（优先在 `GetFaces` 里减少 section 间重复遍历），再做一轮对比。
+
+## Current Window - 2026-04-15 16:25:32
+- Objective: 在 face/cell 重建阶段继续减少重复循环和扩容开销。
+- Actions: 调整 `GetFaces` 的 c0/c1 组装为“先统计邻接计数、再一次性 reserve、最后单次回填”路径；执行 perf-opt 全流程复测。
+- Result: 新快照 `FluentCFFZoneViewer-debug-20260415-162512.log` 显示 `polyhedron` 约 22.7s、`Update` 约 63.3s，较上一轮继续下降。
+- Next: 继续压 `RequestData` type-7 分支（尝试减少每 cell WritePointer 与 SetData 调用频次）。
+
+## Current Window - 2026-04-15 17:01:57
+- Objective: ���û�ͬ������ƽ� face �����ڴ����ָ������Ż���
+- Actions: �� vtkFLUENTCFFReader ������ FaceNodePool + nodeOffset/nodeCount����д GetFaces �ڵ�װ��Ϊ�� section һ�� resize ��ָ����䣬���� face �ڵ��ȡ�ȵ㣨GetFaceNodeId��FaceZone cache��Populate*Cell����Ϊ�������ض�ȡ��ִ�� perf-opt ����/����/�ɼ���
+- Result: Debug ����ͨ����reader ����·�����л��������ط��ʣ���־�ɼ��ű��ɹ������¿����� summary �ļ���
+- Next: ��һ�ּ����� cell polyhedron ��·������������أ�nodes/nodesOffset������ͬ�����Աȡ�
+
+## Current Window - 2026-04-15 17:19:37
+- Objective: 继续推进 cell polyhedron 连续内存池并验证性能。
+- Actions: 在 vtkFLUENTCFFReader 增加 CellNodePool/CellNodeOffsetPool 及每 cell 偏移计数元数据；将 PopulatePolyhedronCell 改为池化写入；将 RequestData type-7 和 GetCellNode* 读取改为优先走连续池；执行 perf-opt build/run/collect 两轮采样。
+- Result: 构建通过，日志显示最新完整轮次 Update 约 60.5s/66.9s（最佳轮次 60.5s），polyhedron 约 22.4s/31.8s，保持在既有优化区间内。
+- Next: 继续将非 polyhedron 的 cell 节点装配也逐步切到连续池并引入单轮净日志采集，降低波动噪声。
+
+## Current Window - 2026-04-15 17:45:42
+- Objective: 继续推进非 polyhedron 节点路径池化并落地单轮净采样日志。
+- Actions: 在 reader 中将非 polyhedron cell 也写入 CellNodePool，并在 RequestData 统一优先从池读取节点；为 run-v21 增加日志 marker；重写 collect-log 以从最后 marker 起生成 delta 与 summary；执行两轮 perf-opt 复测。
+- Result: 第二轮单轮净采样稳定：polyhedron 36662 ms，Update 64367 ms，cell data 各字段基本回到百毫秒级；净采样文件可直接用于本轮对比。
+- Next: 继续压缩 polyhedron 写入与 cell data 填充抖动（重点关注偶发 SV_DENSITY/SV_WALL_DIST 长尾）。
+
+## Current Window - 2026-04-15 17:52:04
+- Objective: 回到 type-7 路径，压缩每 cell WritePointer/SetData 频次并复测。
+- Actions: 在 RequestData 的 type-7 分支引入 polyNodes/polyNodeOffsets 容量复用（按需扩容，否则 SetNumberOfValues+GetPointer）；将 faces->SetData 移出 per-cell 改为循环外一次绑定；补充 polyhedron buffer prepare 与 SetData 独立耗时日志；执行 perf-opt 净采样。
+- Result: 本轮净采样显著下降：polyhedron 6276 ms，Update 38178 ms，cell data 字段大多在 66-231 ms。
+- Next: 继续排查 buffer prepare 的 2.8s 成分（复制/去重占比）并尝试进一步压缩到亚秒级。
+
+## Current Window - 2026-04-15 18:03:19
+- Objective: 在 type-7 分支继续压去重开销，减少 per-cell buffer prepare 热点。
+- Actions: 为 Cell 增加 uniqueNodePool 偏移/计数，并新增 CellUniqueNodePool；在 PopulateCellNodes 阶段预计算 polyhedron 唯一点列表；RequestData type-7 优先复用预计算 unique 节点，仅在缺失时兜底旧去重逻辑；执行 perf-opt 净采样复测。
+- Result: 新净采样 polyhedron 降至 5249 ms（上一轮 6276 ms），Update 38420 ms（与上一轮 38178 ms 同量级），cell data 维持在约 69-143 ms 区间。
+- Next: 继续针对 buffer prepare 约 3238 ms 做拆分（nodes 复制 vs offsets 复制）并尝试批量 memcpy/更紧凑表示。
+
+## Current Window - 2026-04-15 18:24:38
+- Objective: 继续压缩 type-7 buffer prepare 并细分 node/offset/unique 耗时。
+- Actions: 增加 node copy、offset copy、unique select 三段独立计时日志；尝试 vtkId 池后发现回退并立即回滚；保留有效优化路径并复测。
+- Result: 回滚后净采样进一步提升：polyhedron 3408 ms，buffer prepare 1928 ms（node copy 587 ms，offset copy 259 ms，unique select 190 ms），Update 31697 ms，cell data 多字段约 64-133 ms。
+- Next: 基于细分日志继续做 node/offset 批量复制微调和 unique 预处理成本压缩。
+
+## Current Window - 2026-04-15 18:33:25
+- Objective: 回答“由子单元求平均覆盖父单元值”的具体含义并结合代码解释。
+- Actions: 查阅 `vtkFLUENTCFFReader` 中 `GetCellTree`、`PopulateCellTree` 与调用链，确认 parent/child 标记来源与覆盖时机。
+- Result: 已定位到精确逻辑：仅对 parent cell，按 child（且 child 不是 parent）逐分量算术平均并回写父单元数组槽位。
+- Next: 向用户提供分步骤解释、代码片段与一个可复现的小例子。
+
+## Current Window - 2026-04-15 19:18:30
+- Objective: 继续压缩 type-7 polyhedron buffer prepare，尝试减少 node/offset copy 转换成本。
+- Actions: 实现了一版 type-7 `vtkIdType` 镜像池（仅实验）并执行 perf-opt build/run/collect；发现性能显著回退后已完整回滚代码；再次构建并复测确认恢复到稳定区间。
+- Result: 回退试验产生明显退化（Update 约 80.1s，buffer prepare 约 8.36s）并已撤销；回滚后最新净采样恢复为 Update 约 45.9s，polyhedron 约 7.70s，buffer prepare 约 5.09s。
+- Next: 避免再走“镜像池扩内存”方向，改做更小粒度优化（优先评估 offset 表示与 per-cell 写入调用链微调）。
+
+## Current Window - 2026-04-15 19:53:41
+- Objective: 按“更小粒度”继续优化 type-7，尝试压缩 offset 复制与 SetNumberOfValues 调用开销。
+- Actions: 在 `RequestData` 实验了“按 faces 现场构造 offsets”与“同尺寸跳过 SetNumberOfValues”两项微调；执行 perf-opt build/run/collect；确认回退后立即撤销该实验并重新 build/run/collect 复测。
+- Result: 该实验出现明显回退（Update 约 70.8s，polyhedron 约 20.0s），已完整回滚；回滚后最新净采样恢复到稳定区间（Update 约 53.5s，polyhedron 约 5.0s，buffer prepare 约 2.58s）。
+- Next: 下一轮避免改动 RequestData 热循环内流程，转向“预构建阶段减少 node/offset 总量”方向（优先评估 `PopulatePolyhedronCell` 的去冗余写入）。

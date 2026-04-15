@@ -226,6 +226,12 @@ public:
     std::vector<int> faces;
     int parent;
     int child;
+    vtkIdType nodePoolOffset = 0;
+    int nodePoolCount = 0;
+    vtkIdType nodeOffsetPoolOffset = 0;
+    int nodeOffsetPoolCount = 0;
+    vtkIdType uniqueNodePoolOffset = 0;
+    int uniqueNodePoolCount = 0;
     std::vector<int> nodes;
     std::vector<int> nodesOffset;
     std::vector<int> childId;
@@ -234,7 +240,8 @@ public:
   {
     int type;
     unsigned int zone;
-    std::vector<int> nodes;
+    vtkIdType nodeOffset = 0;
+    int nodeCount = 0;
     int c0;
     int c1;
     int periodicShadow;
@@ -416,6 +423,10 @@ protected:
 
   std::vector<Cell> Cells;
   std::vector<Face> Faces;
+  std::vector<int> FaceNodePool;
+  std::vector<int> CellNodePool;
+  std::vector<int> CellNodeOffsetPool;
+  std::vector<vtkIdType> CellUniqueNodePool;
   std::vector<int> CellZones;
   std::vector<FaceZoneInfo> FaceZones;
 

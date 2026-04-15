@@ -186,6 +186,10 @@ void vtkFLUENTCFFReader::ResetMeshState()
   this->Points->Reset();
   this->Cells.clear();
   this->Faces.clear();
+  this->FaceNodePool.clear();
+  this->CellNodePool.clear();
+  this->CellNodeOffsetPool.clear();
+  this->CellUniqueNodePool.clear();
   this->CellZones.clear();
   this->FaceZones.clear();
   this->CellIndicesByZone.clear();
@@ -290,6 +294,8 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
   zoneToLocation.reserve(this->CellZones.size());
   this->CellIndicesByZone.clear();
   this->CellIndicesByZone.resize(this->CellZones.size());
+  std::vector<std::size_t> cellLocationByIndex(
+    this->Cells.size(), std::numeric_limits<std::size_t>::max());
   for (std::size_t location = 0; location < this->CellZones.size(); ++location)
   {
     zoneToLocation.emplace(this->CellZones[location], location);
@@ -300,28 +306,67 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     if (zoneIt != zoneToLocation.end())
     {
       this->CellIndicesByZone[zoneIt->second].push_back(cellId);
+      cellLocationByIndex[static_cast<std::size_t>(cellId)] = zoneIt->second;
     }
   }
 
 #if !defined(NDEBUG)
   std::chrono::steady_clock::duration polyhedronWriteDuration{};
+  std::chrono::steady_clock::duration polyhedronBufferPrepDuration{};
+  std::chrono::steady_clock::duration polyhedronNodeCopyDuration{};
+  std::chrono::steady_clock::duration polyhedronOffsetCopyDuration{};
+  std::chrono::steady_clock::duration polyhedronUniqueSelectDuration{};
+  std::chrono::steady_clock::duration polyhedronSetDataDuration{};
   vtkIdType polyhedronCellCount = 0;
 #endif
+  vtkNew<vtkIdTypeArray> polyNodes;
+  vtkNew<vtkIdTypeArray> polyNodeOffsets;
+  polyNodes->SetNumberOfComponents(1);
+  polyNodeOffsets->SetNumberOfComponents(1);
+  vtkIdType polyNodeCapacity = 0;
+  vtkIdType polyNodeOffsetCapacity = 0;
+#if !defined(NDEBUG)
+  const auto polySetData0 = std::chrono::steady_clock::now();
+#endif
+  faces->SetData(polyNodeOffsets, polyNodes);
+#if !defined(NDEBUG)
+  polyhedronSetDataDuration += (std::chrono::steady_clock::now() - polySetData0);
+#endif
+  std::vector<vtkIdType> uniquePointIds;
+  std::vector<int> pointVisitStamp;
+  pointVisitStamp.resize(static_cast<std::size_t>(this->Points->GetNumberOfPoints()), -1);
+  int visitToken = 0;
 
-  for (const auto& cell : this->Cells)
+  for (vtkIdType cellId = 0; cellId < static_cast<vtkIdType>(this->Cells.size()); ++cellId)
   {
-    const auto zoneIt = zoneToLocation.find(cell.zone);
-    if (zoneIt == zoneToLocation.end())
+    const std::size_t location = cellLocationByIndex[static_cast<std::size_t>(cellId)];
+    if (location == std::numeric_limits<std::size_t>::max())
     {
       continue;
     }
-    const std::size_t location = zoneIt->second;
+    const auto& cell = this->Cells[static_cast<std::size_t>(cellId)];
+    const int* cellNodes = nullptr;
+    std::size_t cellNodeCount = 0;
+    if (cell.nodePoolCount > 0)
+    {
+      const std::size_t nodeOffset = static_cast<std::size_t>(cell.nodePoolOffset);
+      if (nodeOffset + static_cast<std::size_t>(cell.nodePoolCount) <= this->CellNodePool.size())
+      {
+        cellNodes = this->CellNodePool.data() + nodeOffset;
+        cellNodeCount = static_cast<std::size_t>(cell.nodePoolCount);
+      }
+    }
+    if (!cellNodes)
+    {
+      cellNodes = cell.nodes.data();
+      cellNodeCount = cell.nodes.size();
+    }
 
     if (cell.type == 1)
     {
       for (int j = 0; j < 3; j++)
       {
-        this->Triangle->GetPointIds()->SetId(j, cell.nodes[j]);
+        this->Triangle->GetPointIds()->SetId(j, cellNodes[j]);
       }
       grid[location]->InsertNextCell(this->Triangle->GetCellType(), this->Triangle->GetPointIds());
     }
@@ -329,7 +374,7 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     {
       for (int j = 0; j < 4; j++)
       {
-        this->Tetra->GetPointIds()->SetId(j, cell.nodes[j]);
+        this->Tetra->GetPointIds()->SetId(j, cellNodes[j]);
       }
       grid[location]->InsertNextCell(this->Tetra->GetCellType(), this->Tetra->GetPointIds());
     }
@@ -337,7 +382,7 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     {
       for (int j = 0; j < 4; j++)
       {
-        this->Quad->GetPointIds()->SetId(j, cell.nodes[j]);
+        this->Quad->GetPointIds()->SetId(j, cellNodes[j]);
       }
       grid[location]->InsertNextCell(this->Quad->GetCellType(), this->Quad->GetPointIds());
     }
@@ -345,7 +390,7 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     {
       for (int j = 0; j < 8; j++)
       {
-        this->Hexahedron->GetPointIds()->SetId(j, cell.nodes[j]);
+        this->Hexahedron->GetPointIds()->SetId(j, cellNodes[j]);
       }
       grid[location]->InsertNextCell(
         this->Hexahedron->GetCellType(), this->Hexahedron->GetPointIds());
@@ -354,7 +399,7 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     {
       for (int j = 0; j < 5; j++)
       {
-        this->Pyramid->GetPointIds()->SetId(j, cell.nodes[j]);
+        this->Pyramid->GetPointIds()->SetId(j, cellNodes[j]);
       }
       grid[location]->InsertNextCell(this->Pyramid->GetCellType(), this->Pyramid->GetPointIds());
     }
@@ -362,7 +407,7 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     {
       for (int j = 0; j < 6; j++)
       {
-        this->Wedge->GetPointIds()->SetId(j, cell.nodes[j]);
+        this->Wedge->GetPointIds()->SetId(j, cellNodes[j]);
       }
       grid[location]->InsertNextCell(this->Wedge->GetCellType(), this->Wedge->GetPointIds());
     }
@@ -371,29 +416,112 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
 #if !defined(NDEBUG)
       const auto polyhedronStep0 = std::chrono::steady_clock::now();
 #endif
-      vtkNew<vtkIdList> pointIds;
-      vtkNew<vtkIdTypeArray> nodes;
-      vtkNew<vtkIdTypeArray> nodesOffset;
-      nodes->SetNumberOfComponents(1);
-      nodesOffset->SetNumberOfComponents(1);
-      vtkIdType* nodePtr = nodes->WritePointer(0, static_cast<vtkIdType>(cell.nodes.size()));
-      for (std::size_t j = 0; j < cell.nodes.size(); ++j)
+      const int* cellNodeOffsets = nullptr;
+      std::size_t cellNodeOffsetCount = 0;
+      if (cell.nodeOffsetPoolCount > 0)
       {
-        nodePtr[j] = static_cast<vtkIdType>(cell.nodes[j]);
+        cellNodeOffsets =
+          this->CellNodeOffsetPool.data() + static_cast<std::size_t>(cell.nodeOffsetPoolOffset);
+        cellNodeOffsetCount = static_cast<std::size_t>(cell.nodeOffsetPoolCount);
       }
-      vtkIdType* nodeOffsetPtr =
-        nodesOffset->WritePointer(0, static_cast<vtkIdType>(cell.nodesOffset.size()));
-      for (std::size_t j = 0; j < cell.nodesOffset.size(); ++j)
+      else
       {
-        nodeOffsetPtr[j] = static_cast<vtkIdType>(cell.nodesOffset[j]);
+        cellNodeOffsets = cell.nodesOffset.data();
+        cellNodeOffsetCount = cell.nodesOffset.size();
       }
-      faces->SetData(nodesOffset, nodes);
-      for (std::size_t j = 0; j < cell.nodes.size(); j++)
+#if !defined(NDEBUG)
+      const auto polyBuffer0 = std::chrono::steady_clock::now();
+#endif
+      const vtkIdType nodeTupleCount = static_cast<vtkIdType>(cellNodeCount);
+      if (nodeTupleCount > polyNodeCapacity)
       {
-        pointIds->InsertUniqueId(static_cast<vtkIdType>(cell.nodes[j]));
+        polyNodes->WritePointer(0, nodeTupleCount);
+        polyNodeCapacity = nodeTupleCount;
       }
+      else
+      {
+        polyNodes->SetNumberOfValues(nodeTupleCount);
+      }
+      vtkIdType* nodePtr = polyNodes->GetPointer(0);
+#if !defined(NDEBUG)
+      const auto polyNodeCopy0 = std::chrono::steady_clock::now();
+#endif
+      for (std::size_t j = 0; j < cellNodeCount; ++j)
+      {
+        nodePtr[j] = static_cast<vtkIdType>(cellNodes[j]);
+      }
+#if !defined(NDEBUG)
+      polyhedronNodeCopyDuration += (std::chrono::steady_clock::now() - polyNodeCopy0);
+#endif
+      const vtkIdType nodeOffsetTupleCount = static_cast<vtkIdType>(cellNodeOffsetCount);
+      if (nodeOffsetTupleCount > polyNodeOffsetCapacity)
+      {
+        polyNodeOffsets->WritePointer(0, nodeOffsetTupleCount);
+        polyNodeOffsetCapacity = nodeOffsetTupleCount;
+      }
+      else
+      {
+        polyNodeOffsets->SetNumberOfValues(nodeOffsetTupleCount);
+      }
+      vtkIdType* nodeOffsetPtr = polyNodeOffsets->GetPointer(0);
+#if !defined(NDEBUG)
+      const auto polyOffsetCopy0 = std::chrono::steady_clock::now();
+#endif
+      for (std::size_t j = 0; j < cellNodeOffsetCount; ++j)
+      {
+        nodeOffsetPtr[j] = static_cast<vtkIdType>(cellNodeOffsets[j]);
+      }
+#if !defined(NDEBUG)
+      polyhedronOffsetCopyDuration += (std::chrono::steady_clock::now() - polyOffsetCopy0);
+#endif
+#if !defined(NDEBUG)
+      polyhedronBufferPrepDuration += (std::chrono::steady_clock::now() - polyBuffer0);
+#endif
+
+#if !defined(NDEBUG)
+      const auto polyUnique0 = std::chrono::steady_clock::now();
+#endif
+      const vtkIdType* uniqueNodeIds = nullptr;
+      vtkIdType uniqueNodeCount = 0;
+      if (cell.uniqueNodePoolCount > 0)
+      {
+        const std::size_t uniqueOffset = static_cast<std::size_t>(cell.uniqueNodePoolOffset);
+        const std::size_t uniqueCount = static_cast<std::size_t>(cell.uniqueNodePoolCount);
+        if (uniqueOffset + uniqueCount <= this->CellUniqueNodePool.size())
+        {
+          uniqueNodeIds = this->CellUniqueNodePool.data() + uniqueOffset;
+          uniqueNodeCount = static_cast<vtkIdType>(uniqueCount);
+        }
+      }
+      if (!uniqueNodeIds)
+      {
+        ++visitToken;
+        if (visitToken == std::numeric_limits<int>::max())
+        {
+          std::fill(pointVisitStamp.begin(), pointVisitStamp.end(), -1);
+          visitToken = 0;
+        }
+        uniquePointIds.clear();
+        uniquePointIds.reserve(cellNodeCount);
+        for (std::size_t j = 0; j < cellNodeCount; ++j)
+        {
+          const int nodeId = cellNodes[j];
+          if (nodeId >= 0 && static_cast<std::size_t>(nodeId) < pointVisitStamp.size() &&
+            pointVisitStamp[static_cast<std::size_t>(nodeId)] != visitToken)
+          {
+            pointVisitStamp[static_cast<std::size_t>(nodeId)] = visitToken;
+            uniquePointIds.push_back(static_cast<vtkIdType>(nodeId));
+          }
+        }
+        uniqueNodeIds = uniquePointIds.data();
+        uniqueNodeCount = static_cast<vtkIdType>(uniquePointIds.size());
+      }
+#if !defined(NDEBUG)
+      polyhedronUniqueSelectDuration += (std::chrono::steady_clock::now() - polyUnique0);
+#endif
+
       grid[location]->InsertNextCell(
-        VTK_POLYHEDRON, pointIds->GetNumberOfIds(), pointIds->GetPointer(0), faces);
+        VTK_POLYHEDRON, uniqueNodeCount, uniqueNodeIds, faces);
 #if !defined(NDEBUG)
       polyhedronWriteDuration += (std::chrono::steady_clock::now() - polyhedronStep0);
       ++polyhedronCellCount;
@@ -409,6 +537,21 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     FluentCffDebugLog(
       "polyhedron vtkIdTypeArray WritePointer + VTK_POLYHEDRON InsertNextCell total cells=" +
       std::to_string(polyhedronCellCount) + " " + std::to_string(ms) + " ms");
+    const auto prepMs =
+      std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronBufferPrepDuration).count();
+    const auto nodeCopyMs =
+      std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronNodeCopyDuration).count();
+    const auto offsetCopyMs =
+      std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronOffsetCopyDuration).count();
+    const auto uniqueSelectMs =
+      std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronUniqueSelectDuration).count();
+    const auto setDataMs =
+      std::chrono::duration_cast<std::chrono::milliseconds>(polyhedronSetDataDuration).count();
+    FluentCffDebugLog("polyhedron buffer prepare " + std::to_string(prepMs) +
+      " ms; faces->SetData " + std::to_string(setDataMs) + " ms");
+    FluentCffDebugLog("polyhedron node copy " + std::to_string(nodeCopyMs) +
+      " ms; offset copy " + std::to_string(offsetCopyMs) + " ms; unique select " +
+      std::to_string(uniqueSelectMs) + " ms");
   }
 #endif
 
@@ -432,27 +575,16 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
         vtkNew<vtkDoubleArray> doubleArray;
         doubleArray->SetNumberOfComponents(static_cast<int>(dataChunk.dim));
         const std::vector<vtkIdType>& zoneCellIndices = this->CellIndicesByZone[location];
-        const std::size_t tupleCapacity = dataChunk.dataVector.size() / dataChunk.dim;
-        vtkIdType tupleCount = 0;
-        for (vtkIdType cellId : zoneCellIndices)
-        {
-          if (cellId >= 0 && static_cast<std::size_t>(cellId) < tupleCapacity)
-          {
-            ++tupleCount;
-          }
-        }
+        const vtkIdType tupleCount = static_cast<vtkIdType>(zoneCellIndices.size());
         double* tuplePtr =
           doubleArray->WritePointer(0, tupleCount * static_cast<vtkIdType>(dataChunk.dim));
         vtkIdType tupleOffset = 0;
         for (vtkIdType cellId : zoneCellIndices)
         {
-          if (cellId >= 0 && static_cast<std::size_t>(cellId) < tupleCapacity)
+          const std::size_t idxCell = static_cast<std::size_t>(cellId);
+          for (std::size_t dim = 0; dim < dataChunk.dim; dim++)
           {
-            const std::size_t idxCell = static_cast<std::size_t>(cellId);
-            for (std::size_t dim = 0; dim < dataChunk.dim; dim++)
-            {
-              tuplePtr[tupleOffset++] = dataChunk.dataVector[dim + dataChunk.dim * idxCell];
-            }
+            tuplePtr[tupleOffset++] = dataChunk.dataVector[dim + dataChunk.dim * idxCell];
           }
         }
         doubleArray->SetName(dataChunk.variableName.c_str());
@@ -510,25 +642,14 @@ void vtkFLUENTCFFReader::ParseUDMData(
       vtkNew<vtkDoubleArray> doubleArray;
       doubleArray->SetNumberOfComponents(1);
       const std::vector<vtkIdType>& zoneCellIndices = this->CellIndicesByZone[location];
-      const std::size_t tupleCapacity = dataChunk.dataVector.size() / dataChunk.dim;
-      vtkIdType valueCount = 0;
-      for (vtkIdType cellId : zoneCellIndices)
-      {
-        if (cellId >= 0 && static_cast<std::size_t>(cellId) < tupleCapacity)
-        {
-          ++valueCount;
-        }
-      }
+      const vtkIdType valueCount = static_cast<vtkIdType>(zoneCellIndices.size());
       double* valuePtr = doubleArray->WritePointer(0, valueCount);
       vtkIdType valueOffset = 0;
 
       for (vtkIdType cellId : zoneCellIndices)
       {
-        if (cellId >= 0 && static_cast<std::size_t>(cellId) < tupleCapacity)
-        {
-          const std::size_t idxCell = static_cast<std::size_t>(cellId);
-          valuePtr[valueOffset++] = dataChunk.dataVector[dim + dataChunk.dim * idxCell];
-        }
+        const std::size_t idxCell = static_cast<std::size_t>(cellId);
+        valuePtr[valueOffset++] = dataChunk.dataVector[dim + dataChunk.dim * idxCell];
       }
       doubleArray->SetName((dataChunk.variableName + "_" + std::to_string(dim)).c_str());
       grid[location]->GetCellData()->AddArray(doubleArray);
@@ -944,9 +1065,13 @@ int vtkFLUENTCFFReader::GetCellFaceId(vtkIdType cellId, vtkIdType localFaceId) c
 //------------------------------------------------------------------------------
 vtkIdType vtkFLUENTCFFReader::GetCellNumberOfNodes(vtkIdType cellId) const
 {
-  return (cellId >= 0 && static_cast<std::size_t>(cellId) < this->Cells.size())
-    ? static_cast<vtkIdType>(this->Cells[static_cast<std::size_t>(cellId)].nodes.size())
-    : 0;
+  if (cellId < 0 || static_cast<std::size_t>(cellId) >= this->Cells.size())
+  {
+    return 0;
+  }
+  const auto& cell = this->Cells[static_cast<std::size_t>(cellId)];
+  return cell.nodePoolCount > 0 ? static_cast<vtkIdType>(cell.nodePoolCount)
+                                : static_cast<vtkIdType>(cell.nodes.size());
 }
 
 //------------------------------------------------------------------------------
@@ -956,7 +1081,17 @@ int vtkFLUENTCFFReader::GetCellNodeId(vtkIdType cellId, vtkIdType localNodeId) c
   {
     return -1;
   }
-  const auto& nodes = this->Cells[static_cast<std::size_t>(cellId)].nodes;
+  const auto& cell = this->Cells[static_cast<std::size_t>(cellId)];
+  if (cell.nodePoolCount > 0)
+  {
+    if (localNodeId < 0 || localNodeId >= static_cast<vtkIdType>(cell.nodePoolCount))
+    {
+      return -1;
+    }
+    const std::size_t offset = static_cast<std::size_t>(cell.nodePoolOffset + localNodeId);
+    return offset < this->CellNodePool.size() ? this->CellNodePool[offset] : -1;
+  }
+  const auto& nodes = cell.nodes;
   return (localNodeId >= 0 && static_cast<std::size_t>(localNodeId) < nodes.size())
     ? nodes[static_cast<std::size_t>(localNodeId)]
     : -1;
@@ -982,7 +1117,7 @@ int vtkFLUENTCFFReader::GetFaceZoneId(vtkIdType faceId) const
 vtkIdType vtkFLUENTCFFReader::GetFaceNumberOfNodes(vtkIdType faceId) const
 {
   return (faceId >= 0 && static_cast<std::size_t>(faceId) < this->Faces.size())
-    ? static_cast<vtkIdType>(this->Faces[static_cast<std::size_t>(faceId)].nodes.size())
+    ? static_cast<vtkIdType>(this->Faces[static_cast<std::size_t>(faceId)].nodeCount)
     : 0;
 }
 
@@ -993,10 +1128,13 @@ int vtkFLUENTCFFReader::GetFaceNodeId(vtkIdType faceId, vtkIdType localNodeId) c
   {
     return -1;
   }
-  const auto& nodes = this->Faces[static_cast<std::size_t>(faceId)].nodes;
-  return (localNodeId >= 0 && static_cast<std::size_t>(localNodeId) < nodes.size())
-    ? nodes[static_cast<std::size_t>(localNodeId)]
-    : -1;
+  const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+  if (localNodeId < 0 || localNodeId >= static_cast<vtkIdType>(face.nodeCount))
+  {
+    return -1;
+  }
+  const std::size_t offset = static_cast<std::size_t>(face.nodeOffset + localNodeId);
+  return offset < this->FaceNodePool.size() ? this->FaceNodePool[offset] : -1;
 }
 
 //------------------------------------------------------------------------------
@@ -1168,16 +1306,22 @@ void vtkFLUENTCFFReader::EnsureFaceZoneTopologyCache(int zoneIndex) const
       continue;
     }
     const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
-    if (face.nodes.size() < 3)
+    if (face.nodeCount < 3)
     {
       continue;
     }
+    const std::size_t offset = static_cast<std::size_t>(face.nodeOffset);
+    if (offset + static_cast<std::size_t>(face.nodeCount) > this->FaceNodePool.size())
+    {
+      continue;
+    }
+    const int* nodes = this->FaceNodePool.data() + offset;
 
     vtkNew<vtkPolygon> polygon;
-    polygon->GetPointIds()->SetNumberOfIds(static_cast<vtkIdType>(face.nodes.size()));
-    for (std::size_t i = 0; i < face.nodes.size(); ++i)
+    polygon->GetPointIds()->SetNumberOfIds(static_cast<vtkIdType>(face.nodeCount));
+    for (int i = 0; i < face.nodeCount; ++i)
     {
-      polygon->GetPointIds()->SetId(static_cast<vtkIdType>(i), face.nodes[i]);
+      polygon->GetPointIds()->SetId(static_cast<vtkIdType>(i), nodes[i]);
     }
     polys->InsertNextCell(polygon);
     cache.FaceIds.push_back(faceId);
@@ -1203,14 +1347,19 @@ vtkSmartPointer<vtkPolyData> vtkFLUENTCFFReader::CreateFaceZonePolyData(
     this->FaceZoneTopologyCaches[static_cast<std::size_t>(zoneIndex)];
 
   vtkNew<vtkDoubleArray> scalars;
+  const DataChunk* faceChunk = nullptr;
   if (faceArrayName)
   {
     scalars->SetName(faceArrayName);
     scalars->SetNumberOfComponents(1);
     scalars->WritePointer(0, static_cast<vtkIdType>(cache.FaceIds.size()));
+    faceChunk = this->FindDataChunk(this->FaceDataChunks, faceArrayName);
   }
   double* scalarPtr = faceArrayName ? scalars->GetPointer(0) : nullptr;
   vtkIdType scalarOffset = 0;
+  const bool componentInRange =
+    component >= 0 && faceChunk && static_cast<std::size_t>(component) < faceChunk->dim;
+  const double nanValue = std::numeric_limits<double>::quiet_NaN();
 
 #if !defined(NDEBUG)
   const auto faceZonePoly0 = std::chrono::steady_clock::now();
@@ -1219,7 +1368,17 @@ vtkSmartPointer<vtkPolyData> vtkFLUENTCFFReader::CreateFaceZonePolyData(
   {
     if (faceArrayName)
     {
-      scalarPtr[scalarOffset++] = this->GetFaceArrayValue(faceArrayName, faceId, component);
+      double value = nanValue;
+      if (componentInRange && faceId >= 0)
+      {
+        const std::size_t offset = static_cast<std::size_t>(faceId) * faceChunk->dim +
+          static_cast<std::size_t>(component);
+        if (offset < faceChunk->dataVector.size())
+        {
+          value = faceChunk->dataVector[offset];
+        }
+      }
+      scalarPtr[scalarOffset++] = value;
     }
   }
 #if !defined(NDEBUG)
@@ -1777,11 +1936,9 @@ void vtkFLUENTCFFReader::GetFacesGlobal()
   CHECK_HDF(H5Aclose(attr));
   CHECK_HDF(H5Gclose(group));
   this->Faces.resize(lastIndex);
-  // Most faces are tri/quad; reserve a small continuous buffer up front.
-  for (auto& face : this->Faces)
-  {
-    face.nodes.reserve(4);
-  }
+  // Reserve one contiguous node pool for all faces.
+  this->FaceNodePool.clear();
+  this->FaceNodePool.reserve(static_cast<std::size_t>(lastIndex) * 4);
 }
 
 //------------------------------------------------------------------------------
@@ -1999,26 +2156,35 @@ void vtkFLUENTCFFReader::GetFaces()
     CHECK_HDF(H5Dread(dset, H5T_NATIVE_UINT32, H5S_ALL, H5S_ALL, H5P_DEFAULT, nodes_fnodes.data()));
     CHECK_HDF(H5Dclose(dset));
 
-    int numberOfNodesInFace = 0;
-    uint64_t ptr = minId_fnodes;
+    const std::size_t sectionOffset = this->FaceNodePool.size();
+    this->FaceNodePool.resize(sectionOffset + static_cast<std::size_t>(nodes_size));
+    int* const sectionNodePool = this->FaceNodePool.data() + sectionOffset;
+
+    std::size_t localPtr = 0;
     for (unsigned int i = static_cast<unsigned int>(minId_fnodes);
          i <= static_cast<unsigned int>(maxId_fnodes); i++)
     {
-      numberOfNodesInFace = static_cast<int>(nnodes_fnodes[i - minId_fnodes]);
-
-      this->Faces[i - 1].nodes.resize(numberOfNodesInFace);
-      this->Faces[i - 1].type = numberOfNodesInFace;
+      const int numberOfNodesInFace = static_cast<int>(nnodes_fnodes[i - minId_fnodes]);
+      auto& face = this->Faces[i - 1];
+      face.type = numberOfNodesInFace;
+      face.nodeCount = numberOfNodesInFace;
+      face.nodeOffset = static_cast<vtkIdType>(sectionOffset + localPtr);
 
       for (int k = 0; k < numberOfNodesInFace; k++)
       {
-        this->Faces[i - 1].nodes[k] = static_cast<int>(nodes_fnodes[ptr - 1]) - 1;
-        ptr++;
+        const std::size_t srcIndex = localPtr++;
+        sectionNodePool[srcIndex] = static_cast<int>(nodes_fnodes[srcIndex]) - 1;
       }
+    }
+    if (localPtr != static_cast<std::size_t>(nodes_size))
+    {
+      this->FaceNodePool.resize(sectionOffset + localPtr);
     }
     CHECK_HDF(H5Gclose(group));
   }
 
   // C0 C1
+  std::vector<int> faceAdjacencyCount(this->Cells.size(), 0);
   group = H5Gopen(this->HDFImpl->FluentCaseFile, "/meshes/1/faces/c0", H5P_DEFAULT);
   if (group < 0)
   {
@@ -2065,7 +2231,7 @@ void vtkFLUENTCFFReader::GetFaces()
       this->Faces[i - 1].c0 = static_cast<int>(c0[i - minc0]) - 1;
       if (this->Faces[i - 1].c0 >= 0)
       {
-        this->Cells[this->Faces[i - 1].c0].faces.push_back(i - 1);
+        ++faceAdjacencyCount[static_cast<std::size_t>(this->Faces[i - 1].c0)];
       }
     }
   }
@@ -2121,12 +2287,32 @@ void vtkFLUENTCFFReader::GetFaces()
       this->Faces[i - 1].c1 = static_cast<int>(c1[i - minc1]) - 1;
       if (this->Faces[i - 1].c1 >= 0)
       {
-        this->Cells[this->Faces[i - 1].c1].faces.push_back(i - 1);
+        ++faceAdjacencyCount[static_cast<std::size_t>(this->Faces[i - 1].c1)];
       }
     }
   }
 
   CHECK_HDF(H5Gclose(group));
+
+  for (std::size_t cellIndex = 0; cellIndex < this->Cells.size(); ++cellIndex)
+  {
+    auto& facesOfCell = this->Cells[cellIndex].faces;
+    facesOfCell.clear();
+    facesOfCell.reserve(static_cast<std::size_t>(faceAdjacencyCount[cellIndex]));
+  }
+
+  for (std::size_t faceIndex = 0; faceIndex < this->Faces.size(); ++faceIndex)
+  {
+    const auto& face = this->Faces[faceIndex];
+    if (face.c0 >= 0)
+    {
+      this->Cells[static_cast<std::size_t>(face.c0)].faces.push_back(static_cast<int>(faceIndex));
+    }
+    if (face.c1 >= 0)
+    {
+      this->Cells[static_cast<std::size_t>(face.c1)].faces.push_back(static_cast<int>(faceIndex));
+    }
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -2556,10 +2742,70 @@ void vtkFLUENTCFFReader::PopulateCellTree()
 //------------------------------------------------------------------------------
 void vtkFLUENTCFFReader::PopulateCellNodes()
 {
+  this->CellNodePool.clear();
+  this->CellNodeOffsetPool.clear();
+  this->CellUniqueNodePool.clear();
+  std::size_t cellNodeEstimate = 0;
+  std::size_t polyOffsetEstimate = 0;
+  std::size_t polyUniqueEstimate = 0;
+  for (const auto& cell : this->Cells)
+  {
+    switch (cell.type)
+    {
+      case 1:
+        cellNodeEstimate += 3;
+        break;
+      case 2:
+        cellNodeEstimate += 4;
+        break;
+      case 3:
+        cellNodeEstimate += 4;
+        break;
+      case 4:
+        cellNodeEstimate += 8;
+        break;
+      case 5:
+        cellNodeEstimate += 5;
+        break;
+      case 6:
+        cellNodeEstimate += 6;
+        break;
+      case 7:
+        polyOffsetEstimate += cell.faces.size() + 1;
+        polyUniqueEstimate += cell.faces.size() * 2;
+        for (int faceId : cell.faces)
+        {
+          if (faceId < 0 || static_cast<std::size_t>(faceId) >= this->Faces.size())
+          {
+            continue;
+          }
+          cellNodeEstimate +=
+            static_cast<std::size_t>(this->Faces[static_cast<std::size_t>(faceId)].nodeCount);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  this->CellNodePool.reserve(cellNodeEstimate);
+  this->CellNodeOffsetPool.reserve(polyOffsetEstimate);
+  this->CellUniqueNodePool.reserve(polyUniqueEstimate);
+  std::vector<int> pointVisitStamp;
+  pointVisitStamp.resize(static_cast<std::size_t>(this->Points->GetNumberOfPoints()), -1);
+  int visitToken = 0;
+
   for (std::size_t i = 0; i < this->Cells.size(); i++)
   {
+    auto& cell = this->Cells[i];
+    cell.nodePoolOffset = 0;
+    cell.nodePoolCount = 0;
+    cell.nodeOffsetPoolOffset = 0;
+    cell.nodeOffsetPoolCount = 0;
+    cell.uniqueNodePoolOffset = 0;
+    cell.uniqueNodePoolCount = 0;
+
     const vtkIdType id = static_cast<vtkIdType>(i);
-    switch (this->Cells[i].type)
+    switch (cell.type)
     {
       case 1: // Triangle
         this->PopulateTriangleCell(id);
@@ -2589,6 +2835,38 @@ void vtkFLUENTCFFReader::PopulateCellNodes()
         this->PopulatePolyhedronCell(id);
         break;
     }
+
+    if (cell.type != 7 && !cell.nodes.empty())
+    {
+      cell.nodePoolOffset = static_cast<vtkIdType>(this->CellNodePool.size());
+      cell.nodePoolCount = static_cast<int>(cell.nodes.size());
+      this->CellNodePool.insert(this->CellNodePool.end(), cell.nodes.begin(), cell.nodes.end());
+    }
+    else if (cell.type == 7 && cell.nodePoolCount > 0)
+    {
+      cell.uniqueNodePoolOffset = static_cast<vtkIdType>(this->CellUniqueNodePool.size());
+      ++visitToken;
+      if (visitToken == std::numeric_limits<int>::max())
+      {
+        std::fill(pointVisitStamp.begin(), pointVisitStamp.end(), -1);
+        visitToken = 0;
+      }
+      const std::size_t nodeOffset = static_cast<std::size_t>(cell.nodePoolOffset);
+      const std::size_t nodeCount = static_cast<std::size_t>(cell.nodePoolCount);
+      for (std::size_t nodeIdx = 0; nodeIdx < nodeCount; ++nodeIdx)
+      {
+        const int nodeId = this->CellNodePool[nodeOffset + nodeIdx];
+        if (nodeId >= 0 && static_cast<std::size_t>(nodeId) < pointVisitStamp.size() &&
+          pointVisitStamp[static_cast<std::size_t>(nodeId)] != visitToken)
+        {
+          pointVisitStamp[static_cast<std::size_t>(nodeId)] = visitToken;
+          this->CellUniqueNodePool.push_back(static_cast<vtkIdType>(nodeId));
+        }
+      }
+      cell.uniqueNodePoolCount =
+        static_cast<int>(this->CellUniqueNodePool.size() -
+          static_cast<std::size_t>(cell.uniqueNodePoolOffset));
+    }
   }
 }
 
@@ -2596,25 +2874,30 @@ void vtkFLUENTCFFReader::PopulateCellNodes()
 void vtkFLUENTCFFReader::PopulateTriangleCell(int i)
 {
   this->Cells[i].nodes.resize(3);
-  if (this->Faces[this->Cells[i].faces[0]].c0 == i)
+  const int face0Id = this->Cells[i].faces[0];
+  const int face1Id = this->Cells[i].faces[1];
+  const auto& face0 = this->Faces[static_cast<std::size_t>(face0Id)];
+  const auto& face1 = this->Faces[static_cast<std::size_t>(face1Id)];
+  const int* face0Nodes = this->FaceNodePool.data() + static_cast<std::size_t>(face0.nodeOffset);
+  const int* face1Nodes = this->FaceNodePool.data() + static_cast<std::size_t>(face1.nodeOffset);
+  if (face0.c0 == i)
   {
-    this->Cells[i].nodes[0] = this->Faces[this->Cells[i].faces[0]].nodes[0];
-    this->Cells[i].nodes[1] = this->Faces[this->Cells[i].faces[0]].nodes[1];
+    this->Cells[i].nodes[0] = face0Nodes[0];
+    this->Cells[i].nodes[1] = face0Nodes[1];
   }
   else
   {
-    this->Cells[i].nodes[1] = this->Faces[this->Cells[i].faces[0]].nodes[0];
-    this->Cells[i].nodes[0] = this->Faces[this->Cells[i].faces[0]].nodes[1];
+    this->Cells[i].nodes[1] = face0Nodes[0];
+    this->Cells[i].nodes[0] = face0Nodes[1];
   }
 
-  if (this->Faces[this->Cells[i].faces[1]].nodes[0] != this->Cells[i].nodes[0] &&
-    this->Faces[this->Cells[i].faces[1]].nodes[0] != this->Cells[i].nodes[1])
+  if (face1Nodes[0] != this->Cells[i].nodes[0] && face1Nodes[0] != this->Cells[i].nodes[1])
   {
-    this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[1]].nodes[0];
+    this->Cells[i].nodes[2] = face1Nodes[0];
   }
   else
   {
-    this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[1]].nodes[1];
+    this->Cells[i].nodes[2] = face1Nodes[1];
   }
 }
 
@@ -2622,35 +2905,39 @@ void vtkFLUENTCFFReader::PopulateTriangleCell(int i)
 void vtkFLUENTCFFReader::PopulateTetraCell(int i)
 {
   this->Cells[i].nodes.resize(4);
+  const int face0Id = this->Cells[i].faces[0];
+  const int face1Id = this->Cells[i].faces[1];
+  const auto& face0 = this->Faces[static_cast<std::size_t>(face0Id)];
+  const auto& face1 = this->Faces[static_cast<std::size_t>(face1Id)];
+  const int* face0Nodes = this->FaceNodePool.data() + static_cast<std::size_t>(face0.nodeOffset);
+  const int* face1Nodes = this->FaceNodePool.data() + static_cast<std::size_t>(face1.nodeOffset);
 
-  if (this->Faces[this->Cells[i].faces[0]].c0 == i)
+  if (face0.c0 == i)
   {
-    this->Cells[i].nodes[0] = this->Faces[this->Cells[i].faces[0]].nodes[0];
-    this->Cells[i].nodes[1] = this->Faces[this->Cells[i].faces[0]].nodes[1];
-    this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[0]].nodes[2];
+    this->Cells[i].nodes[0] = face0Nodes[0];
+    this->Cells[i].nodes[1] = face0Nodes[1];
+    this->Cells[i].nodes[2] = face0Nodes[2];
   }
   else
   {
-    this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[0]].nodes[0];
-    this->Cells[i].nodes[1] = this->Faces[this->Cells[i].faces[0]].nodes[1];
-    this->Cells[i].nodes[0] = this->Faces[this->Cells[i].faces[0]].nodes[2];
+    this->Cells[i].nodes[2] = face0Nodes[0];
+    this->Cells[i].nodes[1] = face0Nodes[1];
+    this->Cells[i].nodes[0] = face0Nodes[2];
   }
 
-  if (this->Faces[this->Cells[i].faces[1]].nodes[0] != this->Cells[i].nodes[0] &&
-    this->Faces[this->Cells[i].faces[1]].nodes[0] != this->Cells[i].nodes[1] &&
-    this->Faces[this->Cells[i].faces[1]].nodes[0] != this->Cells[i].nodes[2])
+  if (face1Nodes[0] != this->Cells[i].nodes[0] && face1Nodes[0] != this->Cells[i].nodes[1] &&
+    face1Nodes[0] != this->Cells[i].nodes[2])
   {
-    this->Cells[i].nodes[3] = this->Faces[this->Cells[i].faces[1]].nodes[0];
+    this->Cells[i].nodes[3] = face1Nodes[0];
   }
-  else if (this->Faces[this->Cells[i].faces[1]].nodes[1] != this->Cells[i].nodes[0] &&
-    this->Faces[this->Cells[i].faces[1]].nodes[1] != this->Cells[i].nodes[1] &&
-    this->Faces[this->Cells[i].faces[1]].nodes[1] != this->Cells[i].nodes[2])
+  else if (face1Nodes[1] != this->Cells[i].nodes[0] && face1Nodes[1] != this->Cells[i].nodes[1] &&
+    face1Nodes[1] != this->Cells[i].nodes[2])
   {
-    this->Cells[i].nodes[3] = this->Faces[this->Cells[i].faces[1]].nodes[1];
+    this->Cells[i].nodes[3] = face1Nodes[1];
   }
   else
   {
-    this->Cells[i].nodes[3] = this->Faces[this->Cells[i].faces[1]].nodes[2];
+    this->Cells[i].nodes[3] = face1Nodes[2];
   }
 }
 
@@ -2658,61 +2945,69 @@ void vtkFLUENTCFFReader::PopulateTetraCell(int i)
 void vtkFLUENTCFFReader::PopulateQuadCell(int i)
 {
   this->Cells[i].nodes.resize(4);
+  const int face0Id = this->Cells[i].faces[0];
+  const int face1Id = this->Cells[i].faces[1];
+  const int face2Id = this->Cells[i].faces[2];
+  const int face3Id = this->Cells[i].faces[3];
+  const auto& face0 = this->Faces[static_cast<std::size_t>(face0Id)];
+  const auto& face1 = this->Faces[static_cast<std::size_t>(face1Id)];
+  const auto& face2 = this->Faces[static_cast<std::size_t>(face2Id)];
+  const auto& face3 = this->Faces[static_cast<std::size_t>(face3Id)];
+  const int* face0Nodes = this->FaceNodePool.data() + static_cast<std::size_t>(face0.nodeOffset);
+  const int* face1Nodes = this->FaceNodePool.data() + static_cast<std::size_t>(face1.nodeOffset);
+  const int* face2Nodes = this->FaceNodePool.data() + static_cast<std::size_t>(face2.nodeOffset);
+  const int* face3Nodes = this->FaceNodePool.data() + static_cast<std::size_t>(face3.nodeOffset);
 
-  if (this->Faces[this->Cells[i].faces[0]].c0 == i)
+  if (face0.c0 == i)
   {
-    this->Cells[i].nodes[0] = this->Faces[this->Cells[i].faces[0]].nodes[0];
-    this->Cells[i].nodes[1] = this->Faces[this->Cells[i].faces[0]].nodes[1];
+    this->Cells[i].nodes[0] = face0Nodes[0];
+    this->Cells[i].nodes[1] = face0Nodes[1];
   }
   else
   {
-    this->Cells[i].nodes[1] = this->Faces[this->Cells[i].faces[0]].nodes[0];
-    this->Cells[i].nodes[0] = this->Faces[this->Cells[i].faces[0]].nodes[1];
+    this->Cells[i].nodes[1] = face0Nodes[0];
+    this->Cells[i].nodes[0] = face0Nodes[1];
   }
 
-  if ((this->Faces[this->Cells[i].faces[1]].nodes[0] != this->Cells[i].nodes[0] &&
-        this->Faces[this->Cells[i].faces[1]].nodes[0] != this->Cells[i].nodes[1]) &&
-    (this->Faces[this->Cells[i].faces[1]].nodes[1] != this->Cells[i].nodes[0] &&
-      this->Faces[this->Cells[i].faces[1]].nodes[1] != this->Cells[i].nodes[1]))
+  if ((face1Nodes[0] != this->Cells[i].nodes[0] && face1Nodes[0] != this->Cells[i].nodes[1]) &&
+    (face1Nodes[1] != this->Cells[i].nodes[0] && face1Nodes[1] != this->Cells[i].nodes[1]))
   {
-    if (this->Faces[this->Cells[i].faces[1]].c0 == i)
+    if (face1.c0 == i)
     {
-      this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[1]].nodes[0];
-      this->Cells[i].nodes[3] = this->Faces[this->Cells[i].faces[1]].nodes[1];
+      this->Cells[i].nodes[2] = face1Nodes[0];
+      this->Cells[i].nodes[3] = face1Nodes[1];
     }
     else
     {
-      this->Cells[i].nodes[3] = this->Faces[this->Cells[i].faces[1]].nodes[0];
-      this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[1]].nodes[1];
+      this->Cells[i].nodes[3] = face1Nodes[0];
+      this->Cells[i].nodes[2] = face1Nodes[1];
     }
   }
-  else if ((this->Faces[this->Cells[i].faces[2]].nodes[0] != this->Cells[i].nodes[0] &&
-             this->Faces[this->Cells[i].faces[2]].nodes[0] != this->Cells[i].nodes[1]) &&
-    (this->Faces[this->Cells[i].faces[2]].nodes[1] != this->Cells[i].nodes[0] &&
-      this->Faces[this->Cells[i].faces[2]].nodes[1] != this->Cells[i].nodes[1]))
+  else if ((face2Nodes[0] != this->Cells[i].nodes[0] && face2Nodes[0] != this->Cells[i].nodes[1]) &&
+    (face2Nodes[1] != this->Cells[i].nodes[0] && face2Nodes[1] != this->Cells[i].nodes[1]))
   {
-    if (this->Faces[this->Cells[i].faces[2]].c0 == i)
+    if (face2.c0 == i)
     {
-      this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[2]].nodes[0];
-      this->Cells[i].nodes[3] = this->Faces[this->Cells[i].faces[2]].nodes[1];
+      this->Cells[i].nodes[2] = face2Nodes[0];
+      this->Cells[i].nodes[3] = face2Nodes[1];
     }
     else
     {
-      this->Cells[i].nodes[3] = this->Faces[this->Cells[i].faces[2]].nodes[0];
-      this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[2]].nodes[1];
+      this->Cells[i].nodes[3] = face2Nodes[0];
+      this->Cells[i].nodes[2] = face2Nodes[1];
     }
   }
   else
   {
-    if (this->Faces[this->Cells[i].faces[3]].c0 == i)
+    if (face3.c0 == i)
     {
-      this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[3]].nodes[0];
-      this->Cells[i].nodes[3] = this->Faces[this->Cells[i].faces[3]].nodes[1];
+      this->Cells[i].nodes[2] = face3Nodes[0];
+      this->Cells[i].nodes[3] = face3Nodes[1];
     }
     else
     {
-      this->Cells[i].nodes[3] = this->Faces[this->Cells[i].faces[3]].nodes[0];
-      this->Cells[i].nodes[2] = this->Faces[this->Cells[i].faces[3]].nodes[1];
+      this->Cells[i].nodes[3] = face3Nodes[0];
+      this->Cells[i].nodes[2] = face3Nodes[1];
     }
   }
 }
@@ -2729,49 +3024,55 @@ void vtkFLUENTCFFReader::PopulateHexahedronCell(int i)
     throw std::runtime_error("Some cells of the domain are incompatible with this reader.");
   }
 
-  if (this->Faces[this->Cells[i].faces[0]].c0 == i)
+  const int baseFaceId = this->Cells[i].faces[0];
+  const auto& baseFace = this->Faces[static_cast<std::size_t>(baseFaceId)];
+  const int* baseNodes =
+    this->FaceNodePool.data() + static_cast<std::size_t>(baseFace.nodeOffset);
+
+  if (baseFace.c0 == i)
   {
     for (int j = 0; j < 4; j++)
     {
-      this->Cells[i].nodes[j] = this->Faces[this->Cells[i].faces[0]].nodes[j];
+      this->Cells[i].nodes[j] = baseNodes[j];
     }
   }
   else
   {
     for (int j = 3; j >= 0; j--)
     {
-      this->Cells[i].nodes[3 - j] = this->Faces[this->Cells[i].faces[0]].nodes[j];
+      this->Cells[i].nodes[3 - j] = baseNodes[j];
     }
   }
 
   //  Look for opposite face of hexahedron
   for (std::size_t j = 1; j < this->Cells[i].faces.size(); j++)
   {
+    const int faceId = this->Cells[i].faces[j];
+    const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+    const int* faceNodes = this->FaceNodePool.data() + static_cast<std::size_t>(face.nodeOffset);
     int flag = 0;
     for (int k = 0; k < 4; k++)
     {
-      if ((this->Cells[i].nodes[0] == this->Faces[this->Cells[i].faces[j]].nodes[k]) ||
-        (this->Cells[i].nodes[1] == this->Faces[this->Cells[i].faces[j]].nodes[k]) ||
-        (this->Cells[i].nodes[2] == this->Faces[this->Cells[i].faces[j]].nodes[k]) ||
-        (this->Cells[i].nodes[3] == this->Faces[this->Cells[i].faces[j]].nodes[k]))
+      if ((this->Cells[i].nodes[0] == faceNodes[k]) || (this->Cells[i].nodes[1] == faceNodes[k]) ||
+        (this->Cells[i].nodes[2] == faceNodes[k]) || (this->Cells[i].nodes[3] == faceNodes[k]))
       {
         flag = 1;
       }
     }
     if (flag == 0)
     {
-      if (this->Faces[this->Cells[i].faces[j]].c1 == i)
+      if (face.c1 == i)
       {
         for (int k = 4; k < 8; k++)
         {
-          this->Cells[i].nodes[k] = this->Faces[this->Cells[i].faces[j]].nodes[k - 4];
+          this->Cells[i].nodes[k] = faceNodes[k - 4];
         }
       }
       else
       {
         for (int k = 7; k >= 4; k--)
         {
-          this->Cells[i].nodes[k] = this->Faces[this->Cells[i].faces[j]].nodes[7 - k];
+          this->Cells[i].nodes[k] = faceNodes[7 - k];
         }
       }
     }
@@ -2781,33 +3082,36 @@ void vtkFLUENTCFFReader::PopulateHexahedronCell(int i)
   int f01[4] = { -1, -1, -1, -1 };
   for (std::size_t j = 1; j < this->Cells[i].faces.size(); j++)
   {
+    const int faceId = this->Cells[i].faces[j];
+    const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+    const int* faceNodes = this->FaceNodePool.data() + static_cast<std::size_t>(face.nodeOffset);
     int flag0 = 0;
     int flag1 = 0;
     for (int k = 0; k < 4; k++)
     {
-      if (this->Cells[i].nodes[0] == this->Faces[this->Cells[i].faces[j]].nodes[k])
+      if (this->Cells[i].nodes[0] == faceNodes[k])
       {
         flag0 = 1;
       }
-      if (this->Cells[i].nodes[1] == this->Faces[this->Cells[i].faces[j]].nodes[k])
+      if (this->Cells[i].nodes[1] == faceNodes[k])
       {
         flag1 = 1;
       }
     }
     if ((flag0 == 1) && (flag1 == 1))
     {
-      if (this->Faces[this->Cells[i].faces[j]].c0 == i)
+      if (face.c0 == i)
       {
         for (int k = 0; k < 4; k++)
         {
-          f01[k] = this->Faces[this->Cells[i].faces[j]].nodes[k];
+          f01[k] = faceNodes[k];
         }
       }
       else
       {
         for (int k = 3; k >= 0; k--)
         {
-          f01[k] = this->Faces[this->Cells[i].faces[j]].nodes[k];
+          f01[k] = faceNodes[k];
         }
       }
     }
@@ -2817,15 +3121,18 @@ void vtkFLUENTCFFReader::PopulateHexahedronCell(int i)
   int f03[4] = { -1, -1, -1, -1 };
   for (std::size_t j = 1; j < this->Cells[i].faces.size(); j++)
   {
+    const int faceId = this->Cells[i].faces[j];
+    const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+    const int* faceNodes = this->FaceNodePool.data() + static_cast<std::size_t>(face.nodeOffset);
     int flag0 = 0;
     int flag1 = 0;
     for (int k = 0; k < 4; k++)
     {
-      if (this->Cells[i].nodes[0] == this->Faces[this->Cells[i].faces[j]].nodes[k])
+      if (this->Cells[i].nodes[0] == faceNodes[k])
       {
         flag0 = 1;
       }
-      if (this->Cells[i].nodes[3] == this->Faces[this->Cells[i].faces[j]].nodes[k])
+      if (this->Cells[i].nodes[3] == faceNodes[k])
       {
         flag1 = 1;
       }
@@ -2833,18 +3140,18 @@ void vtkFLUENTCFFReader::PopulateHexahedronCell(int i)
 
     if ((flag0 == 1) && (flag1 == 1))
     {
-      if (this->Faces[this->Cells[i].faces[j]].c0 == i)
+      if (face.c0 == i)
       {
         for (int k = 0; k < 4; k++)
         {
-          f03[k] = this->Faces[this->Cells[i].faces[j]].nodes[k];
+          f03[k] = faceNodes[k];
         }
       }
       else
       {
         for (int k = 3; k >= 0; k--)
         {
-          f03[k] = this->Faces[this->Cells[i].faces[j]].nodes[k];
+          f03[k] = faceNodes[k];
         }
       }
     }
@@ -2904,20 +3211,23 @@ void vtkFLUENTCFFReader::PopulatePyramidCell(int i)
   //  The quad face will be the base of the pyramid
   for (std::size_t j = 0; j < this->Cells[i].faces.size(); j++)
   {
-    if (this->Faces[this->Cells[i].faces[j]].nodes.size() == 4)
+    const int faceId = this->Cells[i].faces[j];
+    const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+    const int* faceNodes = this->FaceNodePool.data() + static_cast<std::size_t>(face.nodeOffset);
+    if (face.nodeCount == 4)
     {
-      if (this->Faces[this->Cells[i].faces[j]].c0 == i)
+      if (face.c0 == i)
       {
         for (int k = 0; k < 4; k++)
         {
-          this->Cells[i].nodes[k] = this->Faces[this->Cells[i].faces[j]].nodes[k];
+          this->Cells[i].nodes[k] = faceNodes[k];
         }
       }
       else
       {
         for (int k = 0; k < 4; k++)
         {
-          this->Cells[i].nodes[3 - k] = this->Faces[this->Cells[i].faces[j]].nodes[k];
+          this->Cells[i].nodes[3 - k] = faceNodes[k];
         }
       }
     }
@@ -2926,16 +3236,17 @@ void vtkFLUENTCFFReader::PopulatePyramidCell(int i)
   // Just need to find point 4
   for (std::size_t j = 0; j < this->Cells[i].faces.size(); j++)
   {
-    if (this->Faces[this->Cells[i].faces[j]].nodes.size() == 3)
+    const int faceId = this->Cells[i].faces[j];
+    const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+    const int* faceNodes = this->FaceNodePool.data() + static_cast<std::size_t>(face.nodeOffset);
+    if (face.nodeCount == 3)
     {
       for (int k = 0; k < 3; k++)
       {
-        if ((this->Faces[this->Cells[i].faces[j]].nodes[k] != this->Cells[i].nodes[0]) &&
-          (this->Faces[this->Cells[i].faces[j]].nodes[k] != this->Cells[i].nodes[1]) &&
-          (this->Faces[this->Cells[i].faces[j]].nodes[k] != this->Cells[i].nodes[2]) &&
-          (this->Faces[this->Cells[i].faces[j]].nodes[k] != this->Cells[i].nodes[3]))
+        if ((faceNodes[k] != this->Cells[i].nodes[0]) && (faceNodes[k] != this->Cells[i].nodes[1]) &&
+          (faceNodes[k] != this->Cells[i].nodes[2]) && (faceNodes[k] != this->Cells[i].nodes[3]))
         {
-          this->Cells[i].nodes[4] = this->Faces[this->Cells[i].faces[j]].nodes[k];
+          this->Cells[i].nodes[4] = faceNodes[k];
         }
       }
     }
@@ -2952,9 +3263,10 @@ void vtkFLUENTCFFReader::PopulateWedgeCell(int i)
   int first = 0;
   for (std::size_t j = 0; j < this->Cells[i].faces.size(); j++)
   {
-    if ((this->Faces[this->Cells[i].faces[j]].type == 3) && (first == 0))
+    const int faceId = this->Cells[i].faces[j];
+    if ((this->Faces[static_cast<std::size_t>(faceId)].type == 3) && (first == 0))
     {
-      base = this->Cells[i].faces[j];
+      base = faceId;
       first = 1;
     }
   }
@@ -2964,42 +3276,48 @@ void vtkFLUENTCFFReader::PopulateWedgeCell(int i)
   int second = 0;
   for (std::size_t j = 0; j < this->Cells[i].faces.size(); j++)
   {
-    if ((this->Faces[this->Cells[i].faces[j]].type == 3) && (second == 0) &&
-      (this->Cells[i].faces[j] != base))
+    const int faceId = this->Cells[i].faces[j];
+    if ((this->Faces[static_cast<std::size_t>(faceId)].type == 3) && (second == 0) &&
+      (faceId != base))
     {
-      top = this->Cells[i].faces[j];
+      top = faceId;
       second = 1;
     }
   }
 
   // Load Base nodes into the nodes std::vector
-  if (this->Faces[base].c0 == i)
+  const auto& baseFace = this->Faces[static_cast<std::size_t>(base)];
+  const auto& topFace = this->Faces[static_cast<std::size_t>(top)];
+  const int* baseNodes =
+    this->FaceNodePool.data() + static_cast<std::size_t>(baseFace.nodeOffset);
+  const int* topNodes = this->FaceNodePool.data() + static_cast<std::size_t>(topFace.nodeOffset);
+  if (baseFace.c0 == i)
   {
     for (int j = 0; j < 3; j++)
     {
-      this->Cells[i].nodes[j] = this->Faces[base].nodes[j];
+      this->Cells[i].nodes[j] = baseNodes[j];
     }
   }
   else
   {
     for (int j = 2; j >= 0; j--)
     {
-      this->Cells[i].nodes[2 - j] = this->Faces[base].nodes[j];
+      this->Cells[i].nodes[2 - j] = baseNodes[j];
     }
   }
   // Load Top nodes into the nodes std::vector
-  if (this->Faces[top].c1 == i)
+  if (topFace.c1 == i)
   {
     for (int j = 3; j < 6; j++)
     {
-      this->Cells[i].nodes[j] = this->Faces[top].nodes[j - 3];
+      this->Cells[i].nodes[j] = topNodes[j - 3];
     }
   }
   else
   {
     for (int j = 3; j < 6; j++)
     {
-      this->Cells[i].nodes[j] = this->Faces[top].nodes[5 - j];
+      this->Cells[i].nodes[j] = topNodes[5 - j];
     }
   }
 
@@ -3011,13 +3329,16 @@ void vtkFLUENTCFFReader::PopulateWedgeCell(int i)
     {
       int wf0 = 0;
       int wf1 = 0;
+      const int faceId = this->Cells[i].faces[j];
+      const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+      const int* faceNodes = this->FaceNodePool.data() + static_cast<std::size_t>(face.nodeOffset);
       for (int k = 0; k < 4; k++)
       {
-        if (this->Cells[i].nodes[0] == this->Faces[this->Cells[i].faces[j]].nodes[k])
+        if (this->Cells[i].nodes[0] == faceNodes[k])
         {
           wf0 = 1;
         }
-        if (this->Cells[i].nodes[1] == this->Faces[this->Cells[i].faces[j]].nodes[k])
+        if (this->Cells[i].nodes[1] == faceNodes[k])
         {
           wf1 = 1;
         }
@@ -3025,7 +3346,7 @@ void vtkFLUENTCFFReader::PopulateWedgeCell(int i)
         {
           for (int n = 0; n < 4; n++)
           {
-            w01[n] = this->Faces[this->Cells[i].faces[j]].nodes[n];
+            w01[n] = faceNodes[n];
           }
         }
       }
@@ -3040,13 +3361,16 @@ void vtkFLUENTCFFReader::PopulateWedgeCell(int i)
     {
       int wf0 = 0;
       int wf2 = 0;
+      const int faceId = this->Cells[i].faces[j];
+      const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+      const int* faceNodes = this->FaceNodePool.data() + static_cast<std::size_t>(face.nodeOffset);
       for (int k = 0; k < 4; k++)
       {
-        if (this->Cells[i].nodes[0] == this->Faces[this->Cells[i].faces[j]].nodes[k])
+        if (this->Cells[i].nodes[0] == faceNodes[k])
         {
           wf0 = 1;
         }
-        if (this->Cells[i].nodes[2] == this->Faces[this->Cells[i].faces[j]].nodes[k])
+        if (this->Cells[i].nodes[2] == faceNodes[k])
         {
           wf2 = 1;
         }
@@ -3054,7 +3378,7 @@ void vtkFLUENTCFFReader::PopulateWedgeCell(int i)
         {
           for (int n = 0; n < 4; n++)
           {
-            w02[n] = this->Faces[this->Cells[i].faces[j]].nodes[n];
+            w02[n] = faceNodes[n];
           }
         }
       }
@@ -3106,21 +3430,33 @@ void vtkFLUENTCFFReader::PopulatePolyhedronCell(int i)
   // Reconstruct polyhedron cell for VTK
   // For polyhedron cell, a special ptIds input format is used:
   // nodes stores the nodeIds while nodesOffset stores the node Offset for each faces
+  auto& cell = this->Cells[i];
+  cell.nodes.clear();
+  cell.nodesOffset.clear();
+  cell.nodePoolOffset = static_cast<vtkIdType>(this->CellNodePool.size());
+  cell.nodeOffsetPoolOffset = static_cast<vtkIdType>(this->CellNodeOffsetPool.size());
+
   int currentOffset = 0;
-  this->Cells[i].nodesOffset.push_back(currentOffset);
-  for (std::size_t j = 0; j < this->Cells[i].faces.size(); j++)
+  this->CellNodeOffsetPool.push_back(currentOffset);
+  for (std::size_t j = 0; j < cell.faces.size(); j++)
   {
-    std::size_t numFacePts = this->Faces[this->Cells[i].faces[j]].nodes.size();
+    const int faceId = cell.faces[j];
+    const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+    const int* faceNodes = this->FaceNodePool.data() + static_cast<std::size_t>(face.nodeOffset);
+    std::size_t numFacePts = static_cast<std::size_t>(face.nodeCount);
     if (numFacePts != 0)
     {
       currentOffset += static_cast<int>(numFacePts);
-      this->Cells[i].nodesOffset.push_back(currentOffset);
+      this->CellNodeOffsetPool.push_back(currentOffset);
       for (std::size_t k = 0; k < numFacePts; k++)
       {
-        this->Cells[i].nodes.push_back(this->Faces[this->Cells[i].faces[j]].nodes[k]);
+        this->CellNodePool.push_back(faceNodes[k]);
       }
     }
   }
+  cell.nodePoolCount = currentOffset;
+  cell.nodeOffsetPoolCount = static_cast<int>(this->CellNodeOffsetPool.size() -
+    static_cast<std::size_t>(cell.nodeOffsetPoolOffset));
 }
 
 //------------------------------------------------------------------------------

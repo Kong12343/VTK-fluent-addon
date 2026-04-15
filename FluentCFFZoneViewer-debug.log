@@ -1,0 +1,26 @@
+[2026-04-15 18:44:12.447][FluentCFFZoneViewer][debug] Debug log file: FluentCFFZoneViewer-debug.log
+[2026-04-15 18:44:12.495][FluentCFFZoneViewer][debug] UpdateInformation 2 ms
+[2026-04-15 18:44:12.495][FluentCFFZoneViewer][debug] EnableAllCellArrays+EnableAllFaceArrays 0 ms
+[2026-04-15 18:44:12.495][vtkFLUENTCFFReader][debug] GetNodesGlobal vtkDoubleArray WritePointer + Points::SetData 0 ms
+[2026-04-15 18:44:19.947][vtkFLUENTCFFReader][debug] GetNodes vtkPoints underlying double buffer fill 160 ms
+[2026-04-15 18:45:28.924][vtkFLUENTCFFReader][debug] polyhedron vtkIdTypeArray WritePointer + VTK_POLYHEDRON InsertNextCell total cells=4162544 34277 ms
+[2026-04-15 18:45:28.971][vtkFLUENTCFFReader][debug] polyhedron buffer prepare 4583 ms; faces->SetData 0 ms
+[2026-04-15 18:45:28.971][vtkFLUENTCFFReader][debug] polyhedron node copy 638 ms; offset copy 264 ms; unique select 186 ms
+[2026-04-15 18:45:29.948][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_BF_V" 964 ms
+[2026-04-15 18:45:30.168][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_DENSITY" 78 ms
+[2026-04-15 18:45:30.646][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_DPM_PARTITION" 461 ms
+[2026-04-15 18:45:30.945][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_H" 103 ms
+[2026-04-15 18:45:31.168][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_K" 191 ms
+[2026-04-15 18:45:31.998][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_MU_LAM" 828 ms
+[2026-04-15 18:45:32.390][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_MU_T" 277 ms
+[2026-04-15 18:45:33.248][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_O" 796 ms
+[2026-04-15 18:45:34.886][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_P" 1501 ms
+[2026-04-15 18:45:37.793][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_T" 2623 ms
+[2026-04-15 18:45:39.425][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_U" 1445 ms
+[2026-04-15 18:45:40.530][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_V" 937 ms
+[2026-04-15 18:45:41.354][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_W" 655 ms
+[2026-04-15 18:45:42.922][vtkFLUENTCFFReader][debug] cell data vtkDoubleArray WritePointer chunk="SV_WALL_DIST" 1336 ms
+[2026-04-15 18:45:43.288][FluentCFFZoneViewer][debug] Update 90792 ms
+[2026-04-15 18:45:45.642][FluentCFFZoneViewer][debug] Auto-render check: preferred topology complexity=158 limit=9223372036854775807 (uncapped)
+[2026-04-15 18:45:48.281][vtkFLUENTCFFReader][debug] CreateFaceZonePolyData polys + vtkDoubleArray face scalars (GetFaceArrayValue) 0 ms
+[2026-04-15 18:45:48.318][FluentCFFZoneViewer][debug] CreateFaceZonePolyData("top1", nullptr, 0) 172 ms
