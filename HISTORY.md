@@ -133,3 +133,32 @@
 - Actions: 在 `RequestData` 实验了“按 faces 现场构造 offsets”与“同尺寸跳过 SetNumberOfValues”两项微调；执行 perf-opt build/run/collect；确认回退后立即撤销该实验并重新 build/run/collect 复测。
 - Result: 该实验出现明显回退（Update 约 70.8s，polyhedron 约 20.0s），已完整回滚；回滚后最新净采样恢复到稳定区间（Update 约 53.5s，polyhedron 约 5.0s，buffer prepare 约 2.58s）。
 - Next: 下一轮避免改动 RequestData 热循环内流程，转向“预构建阶段减少 node/offset 总量”方向（优先评估 `PopulatePolyhedronCell` 的去冗余写入）。
+
+## Current Window - 2026-04-15 20:07:30
+- Objective: 按许可执行“预构建阶段去冗余”优化，减少 type-7 的二次扫描。
+- Actions: 实验将 unique 预处理并入 `PopulatePolyhedronCell` 单循环并修改函数签名；执行 perf-opt build/run/collect 后确认回退；已完整回滚本次实验并再次 build/run/collect 验证恢复。
+- Result: 实验版出现回退（Update 约 69.9s，polyhedron 约 8.66s，buffer prepare 约 5.46s）；回滚后恢复到稳定区间（Update 约 51.2s，polyhedron 约 5.13s，buffer prepare 约 2.72s）。
+- Next: 暂停“预构建去冗余”方向，后续改为围绕波动项（cell data chunk）做稳定性优化与多轮中位数评估。
+
+## Current Window - 2026-04-15 20:16:19
+- Objective: 按用户确认的方案 B 去除 cell tree 冗余逻辑。
+- Actions: 在 `vtkFLUENTCFFReader.cxx/.h` 删除 `GetCellTree` 与 `PopulateCellTree` 的调用、声明和实现，并检索确认无残留引用。
+- Result: cell 树分支相关逻辑已彻底移除，代码内 `GetCellTree/PopulateCellTree/cells/tree` 均无匹配。
+- Next: 如需，我可以继续补一轮构建验证，确保该清理在当前环境无编译回归。
+
+## Current Window - 2026-04-15 20:30:47
+- Objective: 按用户要求总结当前状态并给出热力图，继续执行多轮稳定采样。
+- Actions: 连续执行 3 轮短窗口采样后发现数据不完整（未覆盖到 Update 完成）；改为 3 轮 95s 长窗口采样并读取 delta 日志提取关键耗时。
+- Result: 得到完整三轮数据，Update 分别约 52.0s/52.8s/47.2s，中位数约 52.0s；polyhedron 中位数约 5.4s，buffer prepare 中位数约 2.4s，cell data 存在明显长尾抖动（个别 chunk 达 0.4~1.1s）。
+- Next: 输出当前状态热力图并建议下一轮优先治理 cell data chunk 长尾，而非继续改 polyhedron 数据结构。
+
+## Current Window - 2026-04-15 22:58:00
+- Objective: 执行"Update 性能极限优化"完整 5 阶段计划。
+- Actions:
+  - 阶段一：为 ParseCaseFile 内部所有子调用（GetNodesGlobal/GetCellsGlobal/GetFacesGlobal/GetNodes/GetCells/GetFaces 等）、CleanCells、PopulateCellNodes、GetData（ReadDataForType cells/faces）、ZoneMapping、cell loop 添加 Debug 计时日志。采样 2 轮确认暗区分布。
+  - 阶段二：移除 GetCellsGlobal 冗余 per-cell reserve（节省 ~2.4s）；GetNodes 中 H5Gopen 提到循环外；GetFaces 复用 section 级缓冲区；ReadDataForType 单分量字段特化为直接 memcpy。
+  - 阶段三：PopulateCellNodes 估算循环改用统计估算（避免逐 cell 逐 face 遍历）；PopulateHexahedronCell 3 轮面扫描合并为 1 轮；PopulateWedgeCell 类似合并。
+  - 阶段四：cell data scatter 写入检测连续性后走 memcpy 零拷贝路径。
+  - 阶段五：为每个 zone grid 预分配 Allocate(numCells)；修复重复 reserve。
+- Result: Update 从基线 ~77s（含插桩开销）降至 **33-40s**（多轮采样范围）。各子步骤改善：GetCellsGlobal 2.9s→0.4s；ParseCaseFile 11.7s→8.8s；PopulateCellNodes 7.8s→5.5s；GetData 20.5s→10.9s；cell data chunks 长尾从 200-340ms 降至 21-66ms。
+- Next: 全部 5 阶段计划已完成。后续可进一步优化 GetFaces c0+c1+adjacency（~3.3s）和 polyhedron node copy（~0.6-4.2s 波动大）。

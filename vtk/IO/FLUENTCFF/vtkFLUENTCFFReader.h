@@ -339,11 +339,6 @@ protected:
   virtual void GetCellOverset();
 
   /**
-   * Get the tree (AMR) cell topology
-   */
-  virtual void GetCellTree();
-
-  /**
    * Get the tree (AMR) face topology
    */
   virtual void GetFaceTree();
@@ -370,7 +365,6 @@ protected:
    * to the VTK format
    */
   virtual void PopulateCellNodes();
-  virtual void PopulateCellTree();
   //@}
 
   //@{
