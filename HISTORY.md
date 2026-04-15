@@ -181,3 +181,21 @@
 - Root Cause: vtkCellArray::SetData() called only once outside loop; subsequent in-place modifications to underlying arrays left CellArray internal state stale, causing InsertNextCell(VTK_POLYHEDRON) to read incorrect face data.
 - Result: polyhedron rendering restored. Update perf regressed from ~42s to ~62s (+20s per-cell SetData overhead).
 - Next: explore lighter CellArray refresh to recover performance.
+
+## Current Window - 2026-04-16 01:22:30
+- Objective: 处理 `git push` non-fast-forward 拒绝并判定安全同步方案。
+- Actions: 检查 `git status`、远端 `VTK-cff`、本地分支与远端引用；执行 `git fetch --all --prune` 并查看提交图。
+- Result: 确认本地 `main` 与远端 `VTK-cff/main` 为两条不相干历史（远端仍为 `Initial commit`），因此无法快进推送。
+- Next: 用户选择方案：A) 合并两条历史后常规 push；或 B) `--force-with-lease` 强推用本地历史覆盖远端 `main`。
+
+## Current Window - 2026-04-16 09:56:00
+- Objective: 更新“doc 下内容”，为文档入口与索引补齐指路。
+- Actions: 确认仓库实际文档目录为 `docs/`；新增 `doc/README.md` 作为兼容入口；新增 `docs/README.md` 作为索引与推荐阅读顺序。
+- Result: 已补齐 `doc/` → `docs/` 的入口说明，且 `docs/` 下有明确索引页。
+- Next: 如需进一步“更行/更新”文档内容本身，请指出要改的主题（例如：字段解释、特殊拓扑、或与当前 reader 行为对齐的段落）。
+
+## Current Window - 2026-04-16 10:02:10
+- Objective: 更新 `docs/`，使文档描述与 `vtkFLUENTCFFReader` 当前行为对齐。
+- Actions: 对照源码核对 tree/interface/overset/periodic/NCC 等特殊拓扑支持现状；修订 `docs/fluent-cff-dat-cas-structure.md` 的“特殊拓扑”段落；修订 `docs/cff-v21-cas-dat-hdf5-field-tree.md` 的 TODO 描述，区分“已实现的 interface 标记”与“仍 TODO 的 Nonconformal/Periodic”。
+- Result: 文档已与当前 reader 行为一致：不再读取 `cells/tree`，但仍读取 `faces/tree` 并在 `CleanCells()` 中按 child/interface child 过滤；interface parents/children 标记已实现，Nonconformal/Periodic 仍为 TODO。
+- Next: 如需更彻底对齐，可继续补一张“特殊拓扑支持矩阵”（路径→函数→是否实现→影响点）并在 `docs/README.md` 里链接。

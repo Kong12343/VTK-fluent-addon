@@ -128,7 +128,14 @@ CFF 判定：`vtkFLUENTCFFReader::OpenCaseFile` 要求同时存在组 `/meshes` 
         └── pf1                      # dataset
 ```
 
-**Reader 中仍为 TODO、未从文件填充的：** 周期阴影面（`GetPeriodicShadowFaces`）、非一致界面详细信息（`GetNonconformalGridInterfaceFaceInformation`）。
+**Reader 中仍为 TODO、未从文件填充的：**
+
+- 周期阴影面（`GetPeriodicShadowFaces`）。
+- Nonconformal/NCG 的详细信息（`GetNonconformalGridInterfaceFaceInformation`）。
+
+**已实现但仍可能受算例覆盖面限制的：**
+
+- `/meshes/1/faces/interface`：reader 会读取并标记 `interfaceFaceParent/interfaceFaceChild`（用于后续过滤/重建阶段识别 interface child face）。
 
 ### 1.6 可选：`/special/Overset_DCI`（重叠网格）
 

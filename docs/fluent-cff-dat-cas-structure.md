@@ -224,7 +224,15 @@ Reader 读取：
 
 在 Fluent CFF 的 `.cas.h5` 中，除了 nodes/cells/faces 这条主拓扑链路外，还可能存在一些“拓扑关系/特殊标记”类数据集（例如 tree/AMR 关系、接口/周期/NCG 等）。
 
-需要注意的是：**当前本项目的 reader 已不再解析或依赖** `/meshes/1/cells/tree`、`/meshes/1/faces/tree` 这类 tree 数据集；几何重建与结果注入仍完全基于：
+需要注意的是：当前本项目的 reader 对 tree/interface 等“特殊拓扑”的支持现状是：
+
+- **cells tree**：已不再解析或依赖 `/meshes/1/cells/tree`（代码中已无 `GetCellTree/PopulateCellTree`，也不再从文件填充 cell 的 parent/child 关系）。
+- **faces tree**：若存在 `/meshes/1/faces/tree/1`，仍会读取并用来标记 `Face.parent/Face.child`（随后在 `CleanCells()` 中用于剔除 child face，避免参与几何重建）。
+- **interface faces**：若存在 `/meshes/1/faces/interface`，会读取并标记 `interfaceFaceParent/interfaceFaceChild`（同样会在 `CleanCells()` 中剔除 interface child face）。
+- **Nonconformal/NCG 详细信息**：`GetNonconformalGridInterfaceFaceInformation()` 目前仍为 TODO（需要有相应算例才能补齐）。
+- **Periodic shadow faces**：`GetPeriodicShadowFaces()` 目前仍为 TODO。
+
+几何重建与结果注入的主链路仍完全基于：
 
 - `/meshes/1/nodes/*`
 - `/meshes/1/cells/*`
