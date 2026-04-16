@@ -4,11 +4,11 @@
 
 ## 从哪里开始读
 
-请优先从 `docs/README.md` 开始，它包含：
+请优先从 [`../docs/README.md`](../docs/README.md) 开始，它包含：
 
 - 文档索引（每份文档解决什么问题）
 - 推荐阅读顺序
 - 术语与约定（例如：文件内 1-based id vs 内部 0-based）
 
-路径：`../docs/README.md`
+路径：[`../docs/README.md`](../docs/README.md)
 

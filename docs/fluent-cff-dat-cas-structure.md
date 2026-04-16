@@ -16,13 +16,13 @@
 
 关键代码：
 
-- `RequestInformation()`：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L417)
-- `RequestData()`：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L138)
-- `ParseCaseFile()`：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1012)
+- `RequestInformation()`：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L417)
+- `RequestData()`：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L138)
+- `ParseCaseFile()`：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1012)
 
 ## 2. 内存中的核心结构
 
-定义位置：[vtkFLUENTCFFReader.h](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.h#L195)
+定义位置：[vtkFLUENTCFFReader.h](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.h#L195)
 
 ### 2.1 `Cell`
 
@@ -52,7 +52,7 @@
 
 ### 2.4 `DataChunk`
 
-定义位置：[vtkFLUENTCFFReader.h](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.h#L403)
+定义位置：[vtkFLUENTCFFReader.h](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.h#L403)
 
 - `variableName`
 - `dim`
@@ -75,9 +75,9 @@ Reader 按实体类型分两组保存：
 
 对应代码：
 
-- [vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1075)
-- [vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1257)
-- [vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1467)
+- [vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1075)
+- [vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1257)
+- [vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1467)
 
 这一步只分配：
 
@@ -101,7 +101,7 @@ Reader 按实体类型分两组保存：
 - `name`
 - `dimension`
 
-然后再去 `/meshes/1/nodes/coords/<zoneId>` 读取真正坐标，按全局 node id 写入 `vtkPoints`：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1106)
+然后再去 `/meshes/1/nodes/coords/<zoneId>` 读取真正坐标，按全局 node id 写入 `vtkPoints`：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1106)
 
 要点：
 
@@ -124,7 +124,7 @@ cell 基础信息来自：
 - `cellType`
 - `childZoneId`
 
-对应代码：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1285)
+对应代码：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1285)
 
 填充结果：
 
@@ -145,7 +145,7 @@ face 拓扑主要由三类路径组成：
 - `/meshes/1/faces/nodes/<section>`
 - `/meshes/1/faces/c0` 和 `/meshes/1/faces/c1`
 
-对应代码：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1495)
+对应代码：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1495)
 
 #### 3.4.1 `/meshes/1/faces/zoneTopology/name` 如何对 faces 分类
 
@@ -172,7 +172,7 @@ FaceZoneInfo {
 }
 ```
 
-对应代码：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1609)
+对应代码：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1609)
 
 同时该区间内的每个 face 都会写入：
 
@@ -197,7 +197,7 @@ Reader 逐 face 切片，填到：
 - `Faces[i - 1].nodes`
 - `Faces[i - 1].type`
 
-对应代码：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1655)
+对应代码：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1655)
 
 #### 3.4.3 `/meshes/1/faces/c0` 和 `/meshes/1/faces/c1` 如何形成 `Cell.faces`
 
@@ -217,8 +217,8 @@ Reader 读取：
 
 对应代码：
 
-- `c0`：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1727)
-- `c1`：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1780)
+- `c0`：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1727)
+- `c1`：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1780)
 
 ### 3.5 特殊拓扑
 
@@ -239,7 +239,7 @@ Reader 读取：
 - `/meshes/1/faces/*`
 - `/results/1/phase-N/{cells|faces}/*`
 
-如需追踪 reader 的拓扑解析入口，仍以 `ParseCaseFile()` 为准：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1012)
+如需追踪 reader 的拓扑解析入口，仍以 `ParseCaseFile()` 为准：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1012)
 
 ## 4. 拓扑如何变成最终 VTK 单元
 
@@ -251,7 +251,7 @@ Reader 读取：
 - ncg child
 - interface child
 
-位置：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L2189)
+位置：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L2189)
 
 ### 4.2 `PopulateCellNodes()`
 
@@ -263,14 +263,14 @@ Reader 读取：
 
 重建成 VTK 所需的 `Cell.nodes`。
 
-入口位置：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L2263)
+入口位置：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L2263)
 
 polyhedron 例外：
 
 - `Cell.nodes` 是扁平 face-node 列表
 - `Cell.nodesOffset` 是每个 face 的偏移
 
-位置：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L2810)
+位置：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L2810)
 
 ## 5. `.dat.h5` 的真实路径结构
 
@@ -293,7 +293,7 @@ polyhedron 例外：
 这是 face 数据和拓扑结合的关键。
 
 对应实现：`ReadDataForType("faces", ...)`  
-位置：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L2989)
+位置：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L2989)
 
 ### 6.1 从 `fields` 找到 `{field}`
 
@@ -343,7 +343,7 @@ Reader 会创建一个 `DataChunk`：
 - `chunk.dim = numberOfComponents`
 - `chunk.dataVector.size() = Faces.size() * dim`
 
-初始化位置：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L3150)
+初始化位置：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L3150)
 
 然后对区间内每个全局 id `j` 回填：
 
@@ -352,7 +352,7 @@ tupleIndex = j - 1
 chunk.dataVector[tupleIndex * dim + component] = sectionValue
 ```
 
-对应代码：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L3157)
+对应代码：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L3157)
 
 也就是说：
 
@@ -399,7 +399,7 @@ Reader 会：
 4. 用 `Faces[faceId].nodes` 生成 polygon
 5. 用 `GetFaceArrayValue(faceArrayName, faceId, component)` 去 `FaceDataChunks` 取值
 
-位置：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L917)
+位置：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L917)
 
 而 `GetFaceArrayValue()` 的本质只是：
 
@@ -408,7 +408,7 @@ offset = faceId * dim + component
 return dataVector[offset]
 ```
 
-位置：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L903)
+位置：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L903)
 
 ## 8. 一个具体示例
 

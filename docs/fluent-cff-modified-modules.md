@@ -14,9 +14,9 @@
 
 主要涉及文件：
 
-- [vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx)
-- [CMakeLists.txt](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/CMakeLists.txt)
-- [vtkAOSDataArrayTemplateInstantiate.cxx](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/vtkAOSDataArrayTemplateInstantiate.cxx)
+- [vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx)
+- [CMakeLists.txt](../examples/FluentCFFZoneViewer/CMakeLists.txt)
+- [vtkAOSDataArrayTemplateInstantiate.cxx](../examples/FluentCFFZoneViewer/vtkAOSDataArrayTemplateInstantiate.cxx)
 
 ### 1.2 阶段 B：reader 性能/结构优化（减少重复遍历与分配）
 
@@ -24,14 +24,14 @@
 
 主要涉及文件（概览）：
 
-- [vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx)
-- [vtkFLUENTCFFReader.h](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.h)
+- [vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx)
+- [vtkFLUENTCFFReader.h](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.h)
 - 性能验证流程（可复现实验/采样脚本）：
-  - [perf-opt/README.md](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/README.md)
-  - [perf-opt/build-debug.ps1](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/build-debug.ps1)
-  - [perf-opt/run-v21.ps1](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/run-v21.ps1)
-  - [perf-opt/collect-log.ps1](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/collect-log.ps1)
-  - [perf-opt/baseline-notes.md](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/perf-opt/baseline-notes.md)
+  - [perf-opt/README.md](../examples/FluentCFFZoneViewer/perf-opt/README.md)
+  - [perf-opt/build-debug.ps1](../examples/FluentCFFZoneViewer/perf-opt/build-debug.ps1)
+  - [perf-opt/run-v21.ps1](../examples/FluentCFFZoneViewer/perf-opt/run-v21.ps1)
+  - [perf-opt/collect-log.ps1](../examples/FluentCFFZoneViewer/perf-opt/collect-log.ps1)
+  - [perf-opt/baseline-notes.md](../examples/FluentCFFZoneViewer/perf-opt/baseline-notes.md)
 
 ## 2. `vtkFLUENTCFFReader.cxx` 的改动
 
@@ -72,11 +72,11 @@ vtkAOSDataArrayTemplate<T>::SetValue(...)
 
 对应位置示例：
 
-- polyhedron face 数组写入：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L274)
-- cell data 批量写入：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L309)
-- UDM 标量拆分：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L346)
-- face scalar 输出：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L927)
-- points 底层写入：[vtkFLUENTCFFReader.cxx](/F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1075)
+- polyhedron face 数组写入：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L274)
+- cell data 批量写入：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L309)
+- UDM 标量拆分：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L346)
+- face scalar 输出：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L927)
+- points 底层写入：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1075)
 
 ### 2.3 影响
 
@@ -109,7 +109,7 @@ vtkAOSDataArrayTemplate<T>::SetValue(...)
 - 新源文件 `vtkAOSDataArrayTemplateInstantiate.cxx`
 - 编译选项 `-U VTK_USE_EXTERN_TEMPLATE`
 
-对应位置：[CMakeLists.txt](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/CMakeLists.txt)
+对应位置：[CMakeLists.txt](../examples/FluentCFFZoneViewer/CMakeLists.txt)
 
 ### 3.3 作用
 
@@ -131,7 +131,7 @@ vtkAOSDataArrayTemplate<T>::SetValue(...)
 - 显式实例化 `vtkAOSDataArrayTemplate<int>`
 - 显式实例化 `vtkAOSDataArrayTemplate<long long>`
 
-文件位置：[vtkAOSDataArrayTemplateInstantiate.cxx](/F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer/vtkAOSDataArrayTemplateInstantiate.cxx)
+文件位置：[vtkAOSDataArrayTemplateInstantiate.cxx](../examples/FluentCFFZoneViewer/vtkAOSDataArrayTemplateInstantiate.cxx)
 
 ### 4.2 为什么只补这两种
 

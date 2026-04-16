@@ -2,8 +2,8 @@
 
 本文档综合以下来源：
 
-- 项目内说明：`docs/fluent-cff-dat-cas-structure.md`、`h5文件格式.md`
-- 本仓库 Reader 实现：`vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx`（实际打开的路径与数据集/属性名）
+- 项目内说明：[`fluent-cff-dat-cas-structure.md`](./fluent-cff-dat-cas-structure.md)、[`../h5文件格式.md`](../h5文件格式.md)
+- 本仓库 Reader 实现：[`../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx`](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx)（实际打开的路径与数据集/属性名）
 
 **说明：** 下文先给出 **通用** CFF 树（与 Reader 一致）；**第 4 节** 为目录 `data/v21` 下实测样例的完整 HDF5 树与 `fields` 清单（2026-04-15 用 `h5py` 遍历生成）。
 
@@ -182,7 +182,7 @@ CFF 判定：`vtkFLUENTCFFReader::OpenCaseFile` 要求同时存在组 `/meshes` 
 **要点：**
 
 - `cells` 与 `faces` 下的 **`<fieldName>` 不是固定枚举**，由 Fluent 导出；须读取对应 `fields` 数据集解析。
-- 每个字段组有属性 **`nSections`**；每个 section 子数据集名为 **`"1"`、`"2"`、…**，并带 **`minId` / `maxId`**，将值写入按全局 id 对齐的数组（见 `docs/fluent-cff-dat-cas-structure.md` 第 5–8 节）。
+- 每个字段组有属性 **`nSections`**；每个 section 子数据集名为 **`"1"`、`"2"`、…**，并带 **`minId` / `maxId`**，将值写入按全局 id 对齐的数组（见 [`fluent-cff-dat-cas-structure.md`](./fluent-cff-dat-cas-structure.md) 第 5–8 节）。
 
 ### 2.1 常见字段别名（非 HDF 路径）
 

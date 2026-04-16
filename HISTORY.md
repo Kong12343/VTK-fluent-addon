@@ -199,3 +199,9 @@
 - Actions: 对照源码核对 tree/interface/overset/periodic/NCC 等特殊拓扑支持现状；修订 `docs/fluent-cff-dat-cas-structure.md` 的“特殊拓扑”段落；修订 `docs/cff-v21-cas-dat-hdf5-field-tree.md` 的 TODO 描述，区分“已实现的 interface 标记”与“仍 TODO 的 Nonconformal/Periodic”。
 - Result: 文档已与当前 reader 行为一致：不再读取 `cells/tree`，但仍读取 `faces/tree` 并在 `CleanCells()` 中按 child/interface child 过滤；interface parents/children 标记已实现，Nonconformal/Periodic 仍为 TODO。
 - Next: 如需更彻底对齐，可继续补一张“特殊拓扑支持矩阵”（路径→函数→是否实现→影响点）并在 `docs/README.md` 里链接。
+
+## Current Window - 2026-04-16 22:09:06
+- Objective: 将 `doc/docs` 下文档中的路径链接改写为相对路径。
+- Actions: 检查 `doc/` 与 `docs/` 目录及 Markdown 链接；将 `docs/fluent-cff-dat-cas-structure.md`、`docs/fluent-cff-modified-modules.md` 中的绝对盘符链接改为相对路径；补充 `docs/cff-v21-cas-dat-hdf5-field-tree.md`、`docs/README.md`、`doc/README.md` 的文档互链为相对链接；复核确认无残留绝对路径链接。
+- Result: `doc/` 与 `docs/` 内现有 Markdown 路径链接已统一为相对路径，仓库内未再检出 `/F:/Users/20968/projects/ai/gnn/` 形式的文档链接。
+- Next: 如需，我可以继续把 `docs/` 中尚未做成链接的纯文本路径也统一改成可点击相对链接。
