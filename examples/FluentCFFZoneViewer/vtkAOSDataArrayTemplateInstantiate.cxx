@@ -2,3 +2,4 @@
 #include <vtkAOSDataArrayTemplate.txx>
 template class vtkAOSDataArrayTemplate<int>;
 template class vtkAOSDataArrayTemplate<long long>;
+template class vtkAOSDataArrayTemplate<double>;

@@ -205,3 +205,78 @@
 - Actions: 检查 `doc/` 与 `docs/` 目录及 Markdown 链接；将 `docs/fluent-cff-dat-cas-structure.md`、`docs/fluent-cff-modified-modules.md` 中的绝对盘符链接改为相对路径；补充 `docs/cff-v21-cas-dat-hdf5-field-tree.md`、`docs/README.md`、`doc/README.md` 的文档互链为相对链接；复核确认无残留绝对路径链接。
 - Result: `doc/` 与 `docs/` 内现有 Markdown 路径链接已统一为相对路径，仓库内未再检出 `/F:/Users/20968/projects/ai/gnn/` 形式的文档链接。
 - Next: 如需，我可以继续把 `docs/` 中尚未做成链接的纯文本路径也统一改成可点击相对链接。
+
+## Current Window - 2026-04-17 22:33:00
+- Objective: 补充 zoneType 查询接口并更新文档。
+- Actions:
+  - 在 `vtkFLUENTCFFReader.h` 中为 `FaceZoneInfo` 添加 `zoneType` 成员，声明 `GetFaceZoneNameById`/`GetFaceZoneType`/`GetCellZoneType` 接口。
+  - 在 `vtkFLUENTCFFReader.cxx` 中修改 `GetFaces()` 读取 `zoneT[iZone]` 并存储到 FaceZoneInfo；实现三个查询函数；添加 `CellZonesType` 和 `CellZoneIdToType` 成员变量（待完整实现 cell zone 映射）。
+  - 更新 `docs/cff-v21-cas-dat-hdf5-field-tree.md`，在 zoneTopology 说明处添加 zoneType 含义，并新增附录 A 完整映射表。
+- Result: 新接口已添加，FaceZone 可通过 zoneId 查询名称和 zoneType；文档已补充 zoneType 映射说明。
+- Next: CellZonesType 的完整填充需在读取 cell zone 时存储 zoneId→zoneType 映射（目前为 TODO）。
+
+## Current Window - 2026-04-17 22:48:00
+- Objective: 在文档中增加 Cell/Face 重建实现说明，着重体现与原 VTK 模块的差异。
+- Actions: 在 `docs/fluent-cff-modified-modules.md` 第 8 节添加"Cell 与 Face 重建实现说明"，包含：Cell 重建流程（各类 cell 类型重建方式）、Polyhedron 重建细节、Face 重建流程、FaceZone 拓扑缓存、与原始 VTK vtkFLUENTReader 的差异对比表。
+- Result: 文档已补充 Cell/Face 重建实现说明，包含总体流程、各类型重建策略、内存池优化、与原始模块的差异对比。
+- Next: 如有需要可进一步细化各重建函数的代码级说明。
+
+## Current Window - 2026-04-17 23:15:00
+- Objective: 添加 Cell 质心、edge_index 和 face→cell 边界类型查询功能，支持 GNN 图结构构建。
+- Actions:
+  - 在 `vtkFLUENTCFFReader.h` 中添加 `CellCentroids`/`EdgeIndexSrc`/`EdgeIndexDst` 成员变量，新增 `GetCellCentroidCount`/`GetCellCentroids`/`GetEdgeCount`/`GetEdgeIndex`/`GetFaceBoundaryType` API 声明和 `BuildGraphData()` 方法声明。
+  - 在 `vtkFLUENTCFFReader.cxx` 中实现 `BuildGraphData()` 函数：遍历 Faces 提取 c0/c1 邻接构建 edge_index（双向边）；遍历 Cells 取节点坐标平均值作为质心存入 `CellCentroids` 数组；在 `RequestData` 中调用 `BuildGraphData`。
+  - `GetFaceBoundaryType` 返回 0=内部面（c0≥0 且 c1≥0），1=边界面（任一侧 < 0）。
+- Result: 已提供 Cell 质心数组 `[N*3]`、双向 edge_index `[2,E]`、face 边界类型识别，可供 GNN 使用。
+- Next: 如需四面体分割法精确质心计算可进一步优化；当前使用节点平均作为简化。
+
+## Current Window - 2026-04-17 23:45:00
+- Objective: 添加 Face 型心和面外法向计算功能，支持按 zoneId 提取边界数据。
+- Actions:
+  - 在 `vtkFLUENTCFFReader.h` 中添加 `FaceCentroids`/`FaceNormals`/`FaceZoneIdToFaceIndices` 成员变量和 `GetBoundaryFaceCount`/`GetFaceCentroids`/`GetFaceNormals`/`GetFaceCentroidsByZone`/`GetFaceNormalsByZone` API 声明。
+  - 在 `vtkFLUENTCFFReader.cxx` 中实现 5 个查询 API 函数。
+  - 在 `BuildGraphData()` 中添加边界面遍历逻辑：过滤 interior 面（c0≥0 && c1≥0），对每个边界面计算节点平均型心、前3节点叉乘归一化法向，并建立 zoneId → 局部索引映射。
+- Result: 已提供边界 face 型心数组 `[N*3]`、法向数组 `[N*3]`、按 zoneId 提取接口，可供 GNN 边界面特征使用。
+- Next: 如需可扩展支持 face→cell 边界类型识别（壁面/速度入口/压力出口等）。
+
+## Current Window - 2026-04-17 23:59:30
+- Objective: 删除 `Face.zone` 冗余并将按 zone 提取边界 face 数据改为连续区间拷贝。
+- Actions: 在 `vtkFLUENTCFFReader` 中移除 `Face::zone`，新增 `FaceIdToZoneId` 映射与 `FaceZoneIdToBoundarySpan`；重写 `BuildGraphData()` 使 boundary face 的型心/法向按每个 FaceZone 的 `firstFaceId..lastFaceId` 连续写入（退化面用 0 向量占位）；更新 `GetFaceZoneId`/`GetFaceCentroidsByZone`/`GetFaceNormalsByZone` 为 O(1) 区间复制；同步更新文档说明；执行 `cmake --build examples/FluentCFFZoneViewer/build-msys2-clang` 验证编译通过。
+- Result: 编译通过；按 zoneId 获取边界 face 型心/法向现在为连续段拷贝，避免逐个 push_back；`GetFaceZoneId(faceId)` 不再依赖 Face 结构体冗余字段。
+- Next: 如需进一步优化，可在 `BuildGraphData()` 中对 per-face centroid/normal 计算做 SIMD/批量读取或复用缓存，减少 Update 时重复计算。
+
+## Current Window - 2026-04-18 00:12:30
+- Objective: 对 cell 侧做与 face 相同的区间/span 改造，移除 `Cell.zone` 并新增按 zone 一次性拷贝 cell 质心接口。
+- Actions: 在 `vtkFLUENTCFFReader` 中移除 `Cell::zone`，新增 `CellIdToZoneId`、`CellZonesInfo`、`CellZoneIdToCellSpan`；在 `GetCellsGlobal/GetCells` 构建 cellId→zoneId 映射与 span；`GetNumberOfCellZones/RequestData/ParseUDMData` 改为通过 `GetCellZoneId()` 映射而非直接访问 `Cell.zone`；新增 `GetCellCentroidsByZone(zoneId, out)` 走区间复制；执行 `cmake --build examples/FluentCFFZoneViewer/build-msys2-clang -j 8` 验证编译通过。
+- Result: 编译通过；cell zone 映射不再依赖 `Cell.zone` 冗余字段；按 zone 获取 cell 质心可 O(1) 切片拷贝。
+- Next: 若需要进一步减少 `CellIndicesByZone` 的内存与构建耗时，可将其从“存全部 cellId 列表”改为“存 span 并在需要时按需遍历区间”。 
+
+## Current Window - 2026-04-17 12:02:11
+- Objective: FaceNormals 模式下 zone 下拉框显示名可带后缀，但按 Fluent zoneId 取边界法向数据。
+- Actions: 在 `examples/FluentCFFZoneViewer/main.cxx` 为每个 face zone 项设置 `Qt::UserRole+1` 存 `GetFaceZoneIdByName`；`updateView` 的 FaceNormals 分支改为 `currentData(kFaceZoneIdItemRole)`，去掉与 `currentText()` 的字符串匹配；顺带去掉误用 `GetFaceZoneId(i)`（参数实为 faceId）。
+- Result: 逻辑与 UI 显示解耦，带 `(boundary:n)` 后缀时仍能正确解析 zoneId。
+- Next: 本地有构建目录时可再跑一遍 `cmake --build` 确认无编译回归。
+
+## Current Window - 2026-04-17 12:15:00
+- Objective: 检查 `main.cxx` 是否还有“下标当 zoneId”或 Face/Cell 模式混用问题。
+- Actions: 将 `PopulateFaceZones` 中 `GetFaceCentroidsByZone(i)` 改为使用 `GetFaceZoneIdByName` 得到的 `zoneId`；在 `updateView` 为 `TopologyKind::FaceZone` 增加独立分支（`CreateFaceZonePolyData` + `ApplyColorRange`），Cell 分支保留原多块网格逻辑并恢复 surface 显示属性。
+- Result: 边界计数与按 zone 取数一致；Face zone 不再误走 cell block 索引。
+- Next: 本地构建验证。
+
+## Current Window - 2026-04-17 12:35:00
+- Objective: Face normals 视图向量更明显，并按采样点区分颜色。
+- Actions: 在 `main.cxx` 为每个边界采样点增加标量 `VectorIdx` 驱动 `lookupTable`；未勾选 Show Normals 时用大号彩色点；勾选时用 `vtkArrowSource` + `vtkGlyph3D`（`SetColorModeToColorByScalar`、按包围盒对角线 5% 自动定箭头长度）。`CMakeLists.txt` 为可执行目标显式链接 `VTK::FiltersGeneral`/`VTK::FiltersSources`。
+- Result: 源码侧编译通过；本机链接仍可能受 VTK/Qt 导入库环境影响（与 `vtkFloatArray` 模板符号相关，非本次改动独有）。
+- Next: 若链接失败，检查 MSYS2 VTK 与 `LocalFLUENTCFFReader` 的 `vtkAOSDataArrayTemplate` 实例化配置。
+
+## Current Window - 2026-04-17 12:50:00
+- Objective: 修复 `FluentCFFZoneViewer` 链接 `vtkAOSDataArrayTemplate<float/double>::SetValue` undefined reference（`__imp__`）。
+- Actions: 根因是 `LocalFLUENTCFFReader` 使用 `VTKCOMMONCORE_STATIC_DEFINE` 而 `main.cxx` 默认 `dllimport`，符号约定不一致。为 `FluentCFFZoneViewer` 目标增加与 reader 相同的 `VTKCOMMONCORE_STATIC_DEFINE`/`VTK_USE_EXTERN_TEMPLATE=0`；在 `vtkAOSDataArrayTemplateInstantiate.cxx` 增加 `template class vtkAOSDataArrayTemplate<double>;`；Face normals 分支保留 `vtkDoubleArray`（由 `float` 边界数据 cast 写入）。
+- Result: `cmake --build …/build-debug --target FluentCFFZoneViewer.exe` 链接成功（exit 0）。
+- Next: 无。
+
+## Current Window - 2026-04-17 13:00:00
+- Objective: FluentCFFZoneViewer 增加「显示全拓扑」：各 Kind 下一次性显示全部 face zone / 全部 cell block / 全部有边界法向的 zone。
+- Actions: 在 `main.cxx` 增加 `显示全拓扑` 复选框；勾选时禁用 `zoneCombo` 并在 `updateView` 中 Face 用 `vtkAppendPolyData`、Cell 用 `vtkAppendFilter`、FaceNormals 合并各 zone 采样点与全局 `VectorIdx`；`setLoadingState` 与 toggled 同步 zone 可用性；`CMakeLists.txt` 为可执行目标增加 `VTK::FiltersCore`。
+- Result: `cmake --build examples/FluentCFFZoneViewer/build-debug --target FluentCFFZoneViewer.exe` 通过（exit 0）。
+- Next: 若全 cell 合并内存过大，可加进度或上限提示。

@@ -161,6 +161,7 @@ public:
   vtkIdType GetNumberOfNodesRead() const;
   vtkIdType GetNumberOfFacesRead() const;
   int GetNumberOfFaceZones() const;
+  int GetFaceZoneCount() const;
   const char* GetFaceZoneName(int index) const;
   int GetFaceZoneIndexByName(const char* name) const;
   int GetFaceZoneIdByName(const char* name) const;
@@ -168,6 +169,29 @@ public:
   vtkIdType GetFaceZoneLastFaceIdByName(const char* name) const;
   vtkIdType GetFaceZoneSizeByName(const char* name) const;
   int GetFaceIdByZoneName(const char* name, vtkIdType localFaceIndex) const;
+
+  //@{
+  /**
+   * Query FaceZone by zoneId.
+   * @param zoneId Fluent zone id (not zone index).
+   * @return Pointer to zone name string, or nullptr if not found.
+   */
+  const char* GetFaceZoneNameById(int zoneId) const;
+
+  /**
+   * Get FaceZone zoneType integer.
+   * @param zoneId Fluent zone id (not zone index).
+   * @return zoneType value (e.g., 3=wall, 7=symmetry), or -1 if not found.
+   */
+  int GetFaceZoneType(int zoneId) const;
+
+  /**
+   * Get CellZone zoneType integer.
+   * @param zoneId Fluent zone id (not zone index).
+   * @return zoneType value (0/1=fluid, 2=solid), or -1 if not found.
+   */
+  int GetCellZoneType(int zoneId) const;
+  //@}
 
   /**
    * Number of cell-zone blocks in the multiblock output (same as CellZones.size() after Update).
@@ -181,6 +205,7 @@ public:
 
   int GetCellType(vtkIdType cellId) const;
   int GetCellZoneId(vtkIdType cellId) const;
+  void GetCellCentroidsByZone(int zoneId, std::vector<float>& centroids) const;
   vtkIdType GetCellNumberOfFaces(vtkIdType cellId) const;
   int GetCellFaceId(vtkIdType cellId, vtkIdType localFaceId) const;
   vtkIdType GetCellNumberOfNodes(vtkIdType cellId) const;
@@ -192,6 +217,25 @@ public:
   int GetFaceNodeId(vtkIdType faceId, vtkIdType localNodeId) const;
   int GetFaceC0(vtkIdType faceId) const;
   int GetFaceC1(vtkIdType faceId) const;
+
+  //@{
+  /**
+   * Graph data for GNN.
+   * Cell centroids and edge index (adjacency) constructed from face connectivity.
+   */
+  int GetCellCentroidCount() const;
+  const float* GetCellCentroids() const;
+  int GetEdgeCount() const;
+  void GetEdgeIndex(std::vector<int>& src, std::vector<int>& dst) const;
+  int GetFaceBoundaryType(vtkIdType faceId) const;  // 0=内部, 1=边界
+
+  // Boundary face data (non-interior faces only)
+  int GetBoundaryFaceCount() const;
+  const float* GetFaceCentroids() const;
+  const float* GetFaceNormals() const;
+  void GetFaceCentroidsByZone(int zoneId, std::vector<float>& centroids) const;
+  void GetFaceNormalsByZone(int zoneId, std::vector<float>& normals) const;
+  //@}
 
   bool GetNodeCoordinates(vtkIdType nodeId, double coords[3]) const;
 
@@ -222,7 +266,6 @@ public:
   struct Cell
   {
     int type;
-    int zone;
     std::vector<int> faces;
     int parent;
     int child;
@@ -238,27 +281,27 @@ public:
   };
   struct Face
   {
-    int type;
-    unsigned int zone;
-    vtkIdType nodeOffset = 0;
-    int nodeCount = 0;
-    int c0;
-    int c1;
-    int periodicShadow;
-    int parent;
-    int child;
-    int interfaceFaceParent;
-    int interfaceFaceChild;
-    int ncgParent;
-    int ncgChild;
+    int type;                  // 面类型 (VTK cell type: 3=三角形, 4=四边形)
+    vtkIdType nodeOffset = 0;  // 节点偏移量 (全局节点数组中的起始位置)
+    int nodeCount = 0;         // 构成面的节点数量
+    int c0;                    // 相邻单元0 (该面一侧的单元ID)
+    int c1;                    // 相邻单元1 (该面另一侧的单元ID，内部面有两个，边界只有一个)
+    int periodicShadow;        // 周期性对端面ID (周期性边界上对应的另一个面)
+    int parent;                // 父面 (AMR自适应网格粗化时使用)
+    int child;                 // 子面 (AMR自适应网格细化时使用)
+    int interfaceFaceParent;   // 界面面父 (多级非结构网格中父级别的界面面ID)
+    int interfaceFaceChild;    // 界面面子 (多级非结构网格中子级别的界面面ID)
+    int ncgParent;             // NCG父单元ID (Non-Conforming Grid父单元)
+    int ncgChild;              // NCG子单元ID (Non-Conforming Grid子单元)
   };
-
+//*Faces 在大Faces数组中连续储存，应删除Face.zone 只需要判断数组索引在哪个 FaceZoneInfo .firstFaceId .lastFaceId 范围内既能得到对应 zone name ，cell同理
   struct FaceZoneInfo
   {
     std::string name;
     int id = -1;
     vtkIdType firstFaceId = -1;
     vtkIdType lastFaceId = -1;
+    int zoneType = -1;
   };
   //@}
 
@@ -320,6 +363,11 @@ protected:
    * Get the topology of cell per zone
    */
   virtual void GetCells();
+
+  /**
+   * Build graph data (edge_index, cell centroids) for GNN.
+   */
+  virtual void BuildGraphData();
 
   /**
    * Get the topology of face per zone
@@ -422,7 +470,44 @@ protected:
   std::vector<int> CellNodeOffsetPool;
   std::vector<vtkIdType> CellUniqueNodePool;
   std::vector<int> CellZones;
+  std::vector<int> CellZonesType;
+  std::map<int, int> CellZoneIdToType;
+  struct CellZoneInfo
+  {
+    int id = -1;
+    vtkIdType firstCellId = -1;
+    vtkIdType lastCellId = -1;
+  };
+  std::vector<CellZoneInfo> CellZonesInfo;
+
+  struct CellSpan
+  {
+    vtkIdType firstCellId = -1;
+    vtkIdType count = 0;
+  };
+  std::map<int, CellSpan> CellZoneIdToCellSpan;  // zoneId -> contiguous cellId span
+
+  // CellId -> Fluent zoneId mapping (size == Cells.size(), -1 if unknown)
+  std::vector<int> CellIdToZoneId;
   std::vector<FaceZoneInfo> FaceZones;
+
+  // Graph data for GNN
+  std::vector<float> CellCentroids;  // [N_cells * 3] flatten
+  std::vector<int> EdgeIndexSrc;
+  std::vector<int> EdgeIndexDst;
+
+  // Boundary face data (non-interior faces)
+  std::vector<float> FaceCentroids;     // [N_boundary_faces * 3]
+  std::vector<float> FaceNormals;       // [N_boundary_faces * 3]
+  struct BoundaryFaceSpan
+  {
+    vtkIdType firstBoundaryFaceIndex = -1;  // index into boundary arrays (FaceCentroids/FaceNormals)
+    vtkIdType count = 0;                   // number of faces in this span
+  };
+  std::map<int, BoundaryFaceSpan> FaceZoneIdToBoundarySpan;  // zoneId -> contiguous span in boundary arrays
+
+  // FaceId -> Fluent zoneId mapping (size == Faces.size(), -1 if unknown)
+  std::vector<int> FaceIdToZoneId;
 
   vtkTypeBool SwapBytes = 0;
   int GridDimension = 0;

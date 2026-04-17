@@ -192,3 +192,518 @@ vtkAOSDataArrayTemplate<T>::SetValue(...)
 
 - 示例工程承担了一部分工具链兼容职责
 - 标准 `cmake --build` 的行为在当前环境里仍建议继续观察
+
+---
+
+## 7. 新增功能 API 详细说明
+
+本节记录 `vtkFLUENTCFFReader` 相比原始 VTK Reader 新增的 API 功能。
+
+### 7.0 Cell Zone 信息查询 API
+
+**新增方法：**
+
+```cpp
+// vtkFLUENTCFFReader.h:188-203
+int GetCellZoneType(int zoneId) const;
+int GetCellZoneCount() const;
+int GetCellZoneIdAtIndex(int index) const;
+```
+
+**功能说明：**
+- `GetCellZoneType`: 获取指定 Cell Zone 的 zoneType 值（0/1=流体，2=固体），返回 -1 表示未找到
+- `GetCellZoneCount`: 获取输出中 Cell Zone 区块数量（等于 CellZones.size()）
+- `GetCellZoneIdAtIndex`: 根据区块索引获取对应的 Fluent Cell Zone ID（0 <= index < GetCellZoneCount()）
+
+**新增数据结构：**
+
+```cpp
+// vtkFLUENTCFFReader.h:449-450
+std::vector<int> CellZonesType;           // 每个 Cell Zone 的类型
+std::map<int, int> CellZoneIdToType;       // Zone ID 到类型的映射
+```
+
+**实现位置：** `vtkFLUENTCFFReader.cxx:1138-1167`
+
+---
+
+### 7.1 Cell 实体查询 API
+
+**新增方法：**
+
+```cpp
+// vtkFLUENTCFFReader.h:205-210
+int GetCellType(vtkIdType cellId) const;
+int GetCellZoneId(vtkIdType cellId) const;
+vtkIdType GetCellNumberOfFaces(vtkIdType cellId) const;
+int GetCellFaceId(vtkIdType cellId, vtkIdType localFaceId) const;
+vtkIdType GetCellNumberOfNodes(vtkIdType cellId) const;
+int GetCellNodeId(vtkIdType cellId, vtkIdType localNodeId) const;
+```
+
+**功能说明：**
+| 方法 | 功能 | 返回值 |
+|------|------|--------|
+| `GetCellType` | 获取 Cell 的 VTK 类型 | VTK cell type 或 -1 |
+| `GetCellZoneId` | 获取 Cell 所属的 Zone ID | Zone ID 或 -1 |
+| `GetCellNumberOfFaces` | 获取 Cell 包含的面数量 | 面数量或 0 |
+| `GetCellFaceId` | 获取 Cell 的局部面 ID 对应的全局面 ID | 全局面 ID 或 -1 |
+| `GetCellNumberOfNodes` | 获取 Cell 包含的节点数量 | 节点数量或 0 |
+| `GetCellNodeId` | 获取 Cell 的局部节点 ID 对应的全局节点 ID | 全局节点 ID 或 -1 |
+
+**实现位置：** `vtkFLUENTCFFReader.cxx:1182-1251`
+
+---
+
+### 7.2 Cell 数据查询 API
+
+**新增方法：**
+
+```cpp
+// vtkFLUENTCFFReader.h:221-224
+int GetCellArrayComponents(const char* name) const;
+double GetCellArrayValue(const char* name, vtkIdType cellId, int component = 0) const;
+
+// 同样适用于 Face 数据
+int GetFaceArrayComponents(const char* name) const;
+double GetFaceArrayValue(const char* name, vtkIdType faceId, int component = 0) const;
+```
+
+**功能说明：**
+- `GetCellArrayComponents`: 获取 Cell 数据数组的分量数量
+- `GetCellArrayValue`: 直接查询指定 Cell ID 和分量索引处的 Cell 数据值
+- 支持直接随机访问，无需遍历整个数据数组
+
+**实现位置：** `GetCellArrayValue` 在 `vtkFLUENTCFFReader.cxx` 中通过 `FindDataChunk` 和直接偏移计算实现
+
+---
+
+### 7.3 Cell 索引缓存 (CellIndicesByZone)
+
+**新增数据结构：**
+
+```cpp
+// vtkFLUENTCFFReader.h:482
+std::vector<std::vector<vtkIdType>> CellIndicesByZone;
+```
+
+**功能说明：**
+- 按 Cell Zone 索引的 Cell ID 列表
+- 在 `RequestData` 中建立映射：`zoneToLocation` + `cellLocationByIndex`
+- 替代逐个 Cell 遍历的 O(n²) 查找，改为直接按 Zone 索引访问
+
+**优化效果：**
+- Cell 数据注入时，直接通过 `CellIndicesByZone[location]` 获取该 Zone 内的所有 Cell ID
+- UDM 数据拆分时，无需重复遍历所有 Cell
+
+**实现位置：** `vtkFLUENTCFFReader.cxx:341-365`
+
+---
+
+### 7.4 Cell 节点内存池优化
+
+**Cell 结构体扩展字段：**
+
+```cpp
+// vtkFLUENTCFFReader.h:252-257
+struct Cell
+{
+  // ... 原有字段 ...
+  vtkIdType nodePoolOffset = 0;    // 节点池偏移量
+  int nodePoolCount = 0;           // 节点池计数
+  vtkIdType nodeOffsetPoolOffset = 0;
+  int nodeOffsetPoolCount = 0;
+  vtkIdType uniqueNodePoolOffset = 0;
+  int uniqueNodePoolCount = 0;
+};
+```
+
+**功能说明：**
+- 针对 Polyhedron 单元，使用内存池模式存储节点索引
+- 避免为每个 Cell 单独分配 `std::vector<int> nodes`
+- 通过 `nodePoolOffset` + `nodePoolCount` 直接从 `CellNodePool` 数组中读取节点
+- 实现位置：`GetCellNodeId()` 中同时支持 pool 和 vector 两种模式
+
+---
+
+### 7.5 Face Zone 区域 PolyData 创建
+
+**新增方法：**
+
+```cpp
+// vtkFLUENTCFFReader.h:226-227
+vtkSmartPointer<vtkPolyData> CreateFaceZonePolyData(const char* zoneName,
+  const char* faceArrayName = nullptr, int component = 0) const;
+```
+
+**功能说明：**
+- 根据面区域名称创建对应的 `vtkPolyData` 对象
+- 可选地附加面数组标量数据（支持多分量数组的分量选择）
+- 内部使用 `FaceZoneTopologyCache` 缓存拓扑结构，避免重复构建
+
+**实现位置：** `vtkFLUENTCFFReader.cxx:1446-1510`
+
+---
+
+### 7.6 Face Zone 重叠查询
+
+**新增方法：**
+
+```cpp
+// vtkFLUENTCFFReader.h:239
+int GetFaceZoneIndicesOverlappingFaceArray(const char* faceArrayName, vtkIntArray* outZoneIndices) const;
+```
+
+**功能说明：**
+- 查询哪些 Face Zone 的 Fluent 全局面 ID 范围与指定面数组的 HDF5 存储区间有交集
+- 返回与该面数组数据相关的面区域索引列表
+- 支持 RenameArrays 重命名后的数组名和多相流后缀（如 `SV_P-phase_1`）
+
+**返回值：**
+- 正数：重叠的面区域数量
+- 0：无重叠
+- -1：参数无效或数组未知
+
+**实现位置：** `vtkFLUENTCFFReader.cxx:1339-1388`
+
+---
+
+### 7.7 Face Zone 拓扑缓存
+
+**新增数据结构：**
+
+```cpp
+// vtkFLUENTCFFReader.h:484-489
+struct FaceZoneTopologyCache
+{
+  bool Built = false;
+  vtkSmartPointer<vtkCellArray> Polys;
+  std::vector<vtkIdType> FaceIds;
+};
+```
+
+**功能说明：**
+- 缓存每个面区域的多边形拓扑结构
+- 延迟构建（Lazy Build）模式，首次访问时构建
+- 避免每次调用 `CreateFaceZonePolyData` 时重复遍历Faces
+
+**成员变量：** `mutable std::vector<FaceZoneTopologyCache> FaceZoneTopologyCaches;`
+
+**实现位置：** `vtkFLUENTCFFReader.cxx:1391-1443` (`EnsureFaceZoneTopologyCache`)
+
+---
+
+### 7.8 DataChunk 扩展
+
+**扩展字段：**
+
+```cpp
+// vtkFLUENTCFFReader.h:460
+std::vector<std::pair<std::uint64_t, std::uint64_t>> FaceSectionFluentIdRanges1Based;
+```
+
+**功能说明：**
+- 记录 Face 类型数据在 HDF5 中存储的 Fluent 全局面 ID 区间（1-based， inclusive）
+- 用于 `GetFaceZoneIndicesOverlappingFaceArray` 的Overlap检测
+- 在 `ReadDataForType` 中填充
+
+---
+
+### 7.9 Face Zone 详细查询 API
+
+**新增方法：**
+
+```cpp
+// 基本数量查询
+int GetNumberOfFaceArrays() const;
+int GetNumberOfFaceZones() const;
+vtkIdType GetNumberOfNodesRead() const;
+vtkIdType GetNumberOfFacesRead() const;
+
+// Face Zone 名称/索引查询
+const char* GetFaceZoneName(int index) const;
+int GetFaceZoneIndexByName(const char* name) const;
+
+// Face Zone ID 查询
+int GetFaceZoneIdByName(const char* name) const;
+const char* GetFaceZoneNameById(int zoneId) const;
+int GetFaceZoneType(int zoneId) const;
+
+// Face Zone ID 范围查询
+vtkIdType GetFaceZoneFirstFaceIdByName(const char* name) const;
+vtkIdType GetFaceZoneLastFaceIdByName(const char* name) const;
+vtkIdType GetFaceZoneSizeByName(const char* name) const;
+int GetFaceIdByZoneName(const char* name, vtkIdType localFaceIndex) const;
+
+// Face 实体查询 API
+int GetFaceType(vtkIdType faceId) const;
+int GetFaceZoneId(vtkIdType faceId) const;
+vtkIdType GetFaceNumberOfNodes(vtkIdType faceId) const;
+int GetFaceNodeId(vtkIdType faceId, vtkIdType localNodeId) const;
+int GetFaceC0(vtkIdType faceId) const;
+int GetFaceC1(vtkIdType faceId) const;
+
+// 节点坐标查询
+bool GetNodeCoordinates(vtkIdType nodeId, double coords[3]) const;
+```
+
+**功能说明：**
+- Face Zone 名称/ID/索引的相互转换
+- Face Zone 的 ID 范围查询（首尾 face ID）
+- Face Zone 内的局部 face 索引转全局 face ID
+- Face 实体信息查询（类型、所属 Zone、节点、邻接 Cell）
+- 节点坐标直接查询
+
+**实现位置：** `vtkFLUENTCFFReader.cxx:1039-1310`
+
+---
+
+### 7.13 FaceZoneInfo 数据结构
+
+**新增结构体：**
+
+```cpp
+// vtkFLUENTCFFReader.h:279-285
+struct FaceZoneInfo
+{
+  std::string name;
+  int id = -1;
+  vtkIdType firstFaceId = -1;
+  vtkIdType lastFaceId = -1;
+};
+```
+
+**功能说明：**
+- 存储每个 Face Zone 的名称、ID、以及首尾 Face ID 范围
+- `firstFaceId` 和 `lastFaceId` 用于面区域的范围查询
+
+**成员变量：** `std::vector<FaceZoneInfo> FaceZones;`
+
+---
+
+### 7.14 Face 结构体扩展
+
+**Face 结构体：**
+
+```cpp
+// vtkFLUENTCFFReader.h:262-275
+struct Face
+{
+  int type;
+  unsigned int zone;
+  vtkIdType nodeOffset = 0;    // 节点池偏移量（类似 Cell 的节点池优化）
+  int nodeCount = 0;           // 节点数量
+  int c0;                      // 邻接的 Cell 0
+  int c1;                      // 邻接的 Cell 1
+  int periodicShadow;          // 周期性阴影面
+  int parent;
+  int child;
+  int interfaceFaceParent;
+  int interfaceFaceChild;
+  int ncgParent;
+  int ncgChild;
+};
+```
+
+**功能说明：**
+- 类似于 Cell 的节点池优化，`nodeOffset` + `nodeCount` 直接从 `FaceNodePool` 数组读取节点
+- `c0`, `c1` 存储邻接的 Cell ID（用于面心数据查询）
+- 支持周期性、父子关系、界面面、非共形网格等复杂拓扑
+
+---
+
+### 7.15 数据选择器管理
+
+**新增方法（数据数组选择）：**
+
+```cpp
+// Cell 数据选择
+int GetCellArrayStatus(const char* name);
+void SetCellArrayStatus(const char* name, int status);
+void EnableAllCellArrays();
+void DisableAllCellArrays();
+
+// Face 数据选择
+int GetFaceArrayStatus(const char* name);
+void SetFaceArrayStatus(const char* name, int status);
+void EnableAllFaceArrays();
+void DisableAllFaceArrays();
+```
+
+**功能说明：**
+- 提供细粒度的 Cell/Face 数据数组加载控制
+- 支持批量启用/禁用数组
+- 内部使用 `vtkDataArraySelection` 管理
+
+**成员变量：**
+```cpp
+vtkNew<vtkDataArraySelection> CellDataArraySelection;
+vtkNew<vtkDataArraySelection> FaceDataArraySelection;
+```
+
+---
+
+### 7.16 扩展的字段名映射表
+
+**新增映射条目（在 `vtkFLUENTCFFInternal.h` 中）：**
+
+`FieldsNamesMap` 包含了超过80个 Fluent 变量名到可读名称的映射，涵盖：
+
+- 基本流体变量：密度、压力、速度、温度、焓
+- 湍流模型：k-epsilon, k-omega, Spalart-Allmaras 等
+- 多相流：VOF、相分数、体积分数
+- 离散相模型（DPM）：粒子温度、速度、直径、质量等
+- 辐射模型：散射系数、吸收系数
+- 电化学模型：电导率、过电位、渗透压
+- 用户自定义标量（UDS）和动源项
+
+**相关函数：**
+- `GetMatchingFieldName()` - 获取映射后的字段名
+- `RemoveTrailingIndex()` - 移除尾随数字
+- `RemoveSuffixIfPresent()` - 移除特定后缀
+
+---
+
+## 8. 性能优化相关
+
+### 8.1 批量写入优化
+
+为解决 MSYS2/VTK 组合下的链接问题，同时提升了性能：
+
+| 操作 | 原始方式 | 优化后方式 |
+|------|----------|------------|
+| Polyhedron face 写入 | InsertNextValue | vtkIdTypeArray 直接指针写入 |
+| Cell data 数组 | InsertNextTuple | WritePointer 批量写入 |
+| UDM 标量拆分 | InsertNextValue | 直接指针操作 |
+| Face scalar 输出 | InsertNextValue | WritePointer |
+| Node 坐标 | InsertPoint | 底层 vtkDoubleArray 直接写入 |
+
+### 8.2 Face Zone 拓扑缓存
+
+- 首次创建 PolyData 时构建缓存
+- 后续相同区域的查询直接返回缓存结果
+- 缓存仅在 `ResetMeshState` 时清除
+
+---
+
+## 8. Cell 与 Face 重建实现说明
+
+本节说明 `vtkFLUENTCFFReader` 中 Cell（单元）和 Face（面）拓扑重建的实现方式，以及与原始 VTK `vtkFLUENTReader` 的主要差异。
+
+### 8.1 Cell 重建流程
+
+#### 8.1.1 总体流程
+
+```
+1. GetCells() / GetCellsGlobal()
+   └─> 读取 HDF5 中 cells/nodes 路径下的拓扑数据
+       - 节点坐标 (coords)
+       - 节点连接 (nodes)
+       - 面关联 (c0, c1)
+
+2. GetNumberOfCellZones()
+   └─> 遍历 Cells，收集唯一的 zone ID 列表到 CellZones vector
+       - 同时建立 Cell → Zone 映射
+
+3. RequestData() 中的 PopulateCellNodes()
+   └─> 根据 Cell 类型调用对应重建函数：
+       - PopulateTetCell (type=2)
+       - PopulateQuadCell (type=3)
+       - PopulateHexahedronCell (type=4)
+       - PopulatePyramidCell (type=5)
+       - PopulateWedgeCell (type=6)
+       - PopulatePolyhedronCell (type=7)
+```
+
+#### 8.1.2 各类 Cell 重建方式
+
+| Cell 类型 | type 值 | 重建策略 |
+|-----------|---------|----------|
+| Tetrahedron | 2 | 直接从 faces 提取 4 个节点，构造 VTK_TETRA |
+| Quad | 3 | 从 faces 提取 4 个节点，构造 VTK_QUAD + VTK_POLYGON |
+| Hexahedron | 4 | 从 6 个 faces 依次提取节点，构造 VTK_HEXAHEDRON |
+| Pyramid | 5 | 5 个面（4 三角 + 1 四边），构造 VTK_PYRAMID |
+| Wedge | 6 | 5 个面（2 三角 + 3 四边），构造 VTK_WEDGE |
+| Polyhedron | 7 | 从 faces 提取节点并构造变面数单元，使用 Connect 各面的节点 |
+
+#### 8.1.3 Polyhedron 重建（重点优化对象）
+
+Polyhedron（多面体）是最复杂的 Cell 类型，其重建过程：
+
+1. **从 Faces 收集节点**：遍历 Cell 的所有 face，从每个 face 的节点列表中收集节点
+2. **节点去重**：由于 faces 之间共享节点，需要去重得到 Cell 的唯一节点列表
+3. **构造 VTK_POLYHEDRON**：使用 `vtkCellArray::InsertNextCell` 写入
+
+**当前实现 vs 原始 VTK 差异：**
+
+| 方面 | 原始 VTK vtkFLUENTReader | 当前实现 |
+|------|--------------------------|----------|
+| 节点存储 | 每个 Cell 独立 vector | CellNodePool 内存池 + offset/count |
+| 节点去重 | 每次重建时重新去重 | 预计算 UniqueNodePool（已优化） |
+| 写入方式 | `InsertNextCell` 逐个写入 | 批量 `SetData` + 指针操作 |
+| face data | 按 face 遍历获取节点 | 预建 FaceZoneTopologyCache |
+
+### 8.2 Face 重建流程
+
+#### 8.2.1 总体流程
+
+```
+1. GetFaces() / GetFacesGlobal()
+   └─> 读取 HDF5 中 faces/nodes 路径下的拓扑数据
+       - 每面节点数 (nnodes)
+       - 节点ID列表 (nodes)
+       - c0, c1 (单元关联)
+
+2. GetNumberOfFaceZones()
+   └─> 遍历 Faces，收集唯一的 zone ID 列表到 FaceZones vector
+
+3. 创建 Face Zone PolyData
+   └─> CreateFaceZonePolyData(zoneName)
+       - 先检查 FaceZoneTopologyCache
+       - 缺失则遍历 Faces 收集属于该 zone 的面
+       - 构造 vtkPolyData (points + polys)
+```
+
+#### 8.2.2 Face Zone 拓扑缓存
+
+**新增数据结构：**
+
+```cpp
+struct FaceZoneTopologyCache
+{
+  bool Built = false;
+  vtkSmartPointer<vtkCellArray> Polys;
+  std::vector<vtkIdType> FaceIds;
+};
+std::mutable std::vector<FaceZoneTopologyCache> FaceZoneTopologyCaches;
+```
+
+**作用：**
+- 首次调用 `CreateFaceZonePolyData` 时构建并缓存
+- 后续相同 zone 的查询直接返回缓存
+- 仅在 `ResetMeshState` 时清除
+
+### 8.3 与原始 VTK 模块的关键差异总结
+
+| 模块 | 原始 VTK vtkFLUENTReader | vtkFLUENTCFFReader（本项目） |
+|------|--------------------------|------------------------------|
+| HDF5 读取 | 仅支持传统格式 (.cas/.msh) | 支持 CFF HDF5 格式 (.cas.h5/.dat.h5) |
+| Cell 节点存储 | 独立 vector | CellNodePool 内存池 + offset |
+| Polyhedron 去重 | 运行时每次去重 | UniqueNodePool 预计算 |
+| Face Zone 缓存 | 无缓存 | FaceZoneTopologyCache |
+| API 扩展 | 基础读取 | 增加 zone 查询、cell 随机访问等 |
+| 性能优化 | 标准 VTK 流程 | 批量写入、预分配、缓存优化 |
+
+---
+
+## 9. 文件对照表
+
+| 文件路径 | 说明 | 新增/修改 |
+|----------|------|-----------|
+| `vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.h` | Reader 头文件 | 修改 - 新增 API |
+| `vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx` | Reader 实现 | 修改 - 新增功能实现 |
+| `vtk/IO/FLUENTCFF/vtkFLUENTCFFInternal.h` | 内部工具头文件 | 修改 - 扩展字段映射表 |
+| `vtk/IO/FLUENTCFF/vtkFLUENTCFFInternal.cxx` | 内部工具实现 | 既有实现 |
+| `vtk/IO/FLUENTCFF/vtk.module` | CMake 模块定义 | 既有文件 |
+| `vtk/IO/FLUENTCFF/vtkIOFLUENTCFFModule.h` | 导出宏 | 既有文件 |
+| `examples/FluentCFFZoneViewer/vtkAOSDataArrayTemplateInstantiate.cxx` | 模板实例化补丁 | 新增 - 构建兼容 |

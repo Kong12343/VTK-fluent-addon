@@ -72,6 +72,12 @@ target_link_libraries(LocalFLUENTCFFReader
 )
 
 add_executable(FluentCFFZoneViewer main.cxx)
+# Match LocalFLUENTCFFReader: VTK headers must not use dllimport for vtkCommonCore templates used in this TU,
+# otherwise MinGW links __imp__ vtkAOSDataArrayTemplate<*>::SetValue while our static lib holds explicit instantiations.
+target_compile_definitions(FluentCFFZoneViewer PRIVATE
+  VTK_USE_EXTERN_TEMPLATE=0
+  VTKCOMMONCORE_STATIC_DEFINE
+)
 target_link_libraries(FluentCFFZoneViewer
   PRIVATE
     LocalFLUENTCFFReader
@@ -87,6 +93,9 @@ target_link_libraries(FluentCFFZoneViewer
     VTK::InteractionStyle
     VTK::InteractionWidgets
     VTK::CommonColor
+    VTK::FiltersCore
+    VTK::FiltersGeneral
+    VTK::FiltersSources
 )
 
 vtk_module_autoinit(

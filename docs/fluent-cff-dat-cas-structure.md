@@ -174,16 +174,10 @@ FaceZoneInfo {
 
 对应代码：[vtkFLUENTCFFReader.cxx](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx#L1609)
 
-同时该区间内的每个 face 都会写入：
+同时该区间内的每个 face 都会在 reader 内部建立 faceId→zoneId 映射（不再存储 `Face.zone` 字段），因此 face 分类同样可实现双向查询：
 
-```text
-Faces[faceId].zone = zoneId
-```
-
-所以 face 分类有两套同步索引：
-
-- `FaceZoneInfo`：从名字出发找到 face 区间
-- `Face.zone`：从 face 出发找到所属 zone id
+- `FaceZoneInfo`：从 zone（名字/索引）出发得到 faceId 区间
+- faceId→zoneId 映射：从 faceId 出发得到所属 zoneId
 
 #### 3.4.2 `/meshes/1/faces/nodes/<section>` 如何形成 `Face.nodes`
 

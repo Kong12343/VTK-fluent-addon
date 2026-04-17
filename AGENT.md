@@ -7,3 +7,4 @@
 -测试文件位于 data\v21
 - 不要调用 C:/ProgramData/anaconda3/ 下的任何库。默认库在 C:/tools/msys64/mingw64，没有库则安装
 - agent 使用命令行直接运行 FluentCFFZoneViewer.exe 时输入测试文件
+- 每次更改记得更新 doc下文档

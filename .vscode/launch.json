@@ -28,6 +28,7 @@
       "program": "${fileDirname}/build-debug/${fileDirnameBasename}.exe",
       "args": [],
       "cwd": "${workspaceFolder}",
+      "externalConsole": true,
       "stopAtEntry": true,
       "MIMode": "gdb",
       "miDebuggerPath": "C:\\tools\\msys64\\mingw64\\bin\\gdb.exe",

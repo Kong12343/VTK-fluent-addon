@@ -16,10 +16,11 @@
     {
       "label": "CMake Clang Build Current File (Debug)",
       "type": "shell",
+      // "command":"echo \"${gcc}\"",
       "command": "cmake -S \"${fileDirname}\" -B \"${fileDirname}/build-debug\" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug --debug-output; if ($LASTEXITCODE -eq 0) { cmake --build \"${fileDirname}/build-debug\" --target \"${fileDirnameBasename}.exe\" }",
       "group": "build",
       "problemMatcher": [
-        "$gcc"
+        // "$gcc"
       ]
     }
   ]

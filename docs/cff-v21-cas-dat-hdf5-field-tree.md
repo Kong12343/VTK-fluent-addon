@@ -98,7 +98,7 @@ CFF 判定：`vtkFLUENTCFFReader::OpenCaseFile` 要求同时存在组 `/meshes` 
 │   ├── @nZones
 │   ├── minId, maxId, id, name       # datasets（name 常为分号分隔字符串）
 │   ├── dimension
-│   ├── zoneType
+│   ├── zoneType                     # 边界条件类型：2=interior, 3=wall, 7=symmetry 等
 │   ├── faceType
 │   ├── childZoneId
 │   ├── shadowZoneId
@@ -303,3 +303,46 @@ CFF 判定：`vtkFLUENTCFFReader::OpenCaseFile` 要求同时存在组 `/meshes` 
 | SV_WALL_* 等壁面相关 | 1 | 多为 (179076,) 或 (179076, 3) |
 
 具体 `minId`/`maxId` 以各 section 上属性为准（本文件中间面段与边界面段分段存储）。
+
+---
+
+## 附录 A：zoneType 映射表
+
+`zoneType` 是 Fluent cas.h5 文件中用于标识边界条件类型或单元区域类型的整数标识符。
+
+### Face Zone（边界条件类型）
+
+| zoneType | 类型名称 | 说明 |
+|----------|----------|------|
+| 2 | interior | 内部面（默认） |
+| 3 | wall | 壁面 |
+| 4 | velocity-inlet / pressure-inlet | 速度入口 / 压力入口 |
+| 5 | pressure-outlet | 压力出口 |
+| 6 | outflow / mass-flow-outlet | 自由出口 / 质量流出口 |
+| 7 | symmetry | 对称面 |
+| 8 | mass-flow-inlet | 质量流量入口 |
+| 9 | far-field / pressure-far-field | 远场 |
+| 10 | inlet-vent | 入口通风 |
+| 11 | exhaust-fan | 排风扇 |
+| 12 | outlet-vent | 出口通风 |
+| 14 | axis | 轴对称轴线 |
+| 19 | interface | 交界面 |
+| 20 | periodic | 周期性边界 |
+
+### Cell Zone（单元区域类型）
+
+| zoneType | 类型名称 | 说明 |
+|----------|----------|------|
+| 0 | fluid | 流体区域（死区） |
+| 1 | fluid | 流体区域（活跃） |
+| 2 | solid | 固体区域（通过材料属性区分） |
+| 3 | porous | 多孔介质（作为流体区的一种） |
+| 32 | inactive | 非活跃区域（如自适应后的父单元） |
+
+### Reader 接口
+
+`vtkFLUENTCFFReader` 提供以下查询接口：
+
+- `GetFaceZoneNameById(zoneId)` - 根据 FaceZone zoneId 查询名称
+- `GetFaceZoneType(zoneId)` - 根据 FaceZone zoneId 查询 zoneType 整数值
+- `GetCellZoneType(zoneId)` - 根据 CellZone zoneId 查询 zoneType 整数值

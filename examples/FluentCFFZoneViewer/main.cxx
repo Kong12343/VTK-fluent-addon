@@ -1,6 +1,7 @@
 #include "vtkFLUENTCFFReader.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -16,21 +17,29 @@
 #include <QSurfaceFormat>
 #include <QtConcurrent/QtConcurrent>
 #include <QVBoxLayout>
+#include <QVariant>
 #include <QWidget>
 
 #include <QVTKOpenGLNativeWidget.h>
 
 #include <vtkActor.h>
+#include <vtkAppendFilter.h>
+#include <vtkAppendPolyData.h>
+#include <vtkArrowSource.h>
 #include <vtkCellData.h>
 #include <vtkDataArray.h>
 #include <vtkDataSet.h>
 #include <vtkDataSetMapper.h>
+#include <vtkDoubleArray.h>
 #include <vtkGenericOpenGLRenderWindow.h>
+#include <vtkPoints.h>
+#include <vtkGlyph3D.h>
 #include <vtkLookupTable.h>
 #include <vtkMapper.h>
 #include <vtkMultiBlockDataSet.h>
 #include <vtkNamedColors.h>
 #include <vtkNew.h>
+#include <vtkPointData.h>
 #include <vtkPolyData.h>
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
@@ -116,14 +125,19 @@ enum class TopologyKind : int
 {
   FaceZone = 0,
   CellZone = 1,
+  FaceNormals = 2,
 };
+
+// QComboBox default item data (Qt::UserRole) holds zone face count / cell count for auto-render.
+// Face zone Fluent zoneId is stored separately so the visible label may include suffixes.
+constexpr int kFaceZoneIdItemRole = Qt::UserRole + 1;
 
 void ConfigureSurfaceFormat()
 {
   QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
 }
 
-int PopulateFaceZones(QComboBox* combo, vtkFLUENTCFFReader* reader)
+int PopulateFaceZones(QComboBox* combo, vtkFLUENTCFFReader* reader, bool showBoundaryCount)
 {
   combo->clear();
   int preferredIndex = -1;
@@ -134,8 +148,18 @@ int PopulateFaceZones(QComboBox* combo, vtkFLUENTCFFReader* reader)
     if (zoneName)
     {
       const vtkIdType zoneSize = reader->GetFaceZoneSizeByName(zoneName);
+      const int zoneId = reader->GetFaceZoneIdByName(zoneName);
+      QString displayName = QString::fromUtf8(zoneName);
+      if (showBoundaryCount)
+      {
+        std::vector<float> tmp;
+        reader->GetFaceCentroidsByZone(zoneId, tmp);
+        int boundaryCount = static_cast<int>(tmp.size() / 3);
+        displayName = QString("%1 (boundary:%2)").arg(displayName).arg(boundaryCount);
+      }
       combo->addItem(
-        QString::fromUtf8(zoneName), QVariant::fromValue<qlonglong>(static_cast<qlonglong>(zoneSize)));
+        displayName, QVariant::fromValue<qlonglong>(static_cast<qlonglong>(zoneSize)));
+      combo->setItemData(combo->count() - 1, QVariant(zoneId), kFaceZoneIdItemRole);
       if (zoneSize > 0 && zoneSize < preferredSize)
       {
         preferredSize = zoneSize;
@@ -294,11 +318,14 @@ int main(int argc, char* argv[])
   auto* kindCombo = new QComboBox();
   kindCombo->addItem("Face zone");
   kindCombo->addItem("Cell zone");
+  kindCombo->addItem("Face normals");
 
   auto* zoneLabel = new QLabel("Topology");
   auto* zoneCombo = new QComboBox();
   auto* fieldLabel = new QLabel("Color");
   auto* fieldCombo = new QComboBox();
+  auto* showNormalsCheck = new QCheckBox("Show Normals");
+  auto* showFullTopologyCheck = new QCheckBox(QStringLiteral("显示全拓扑"));
   auto* statusLabel = new QLabel("Ready");
 
   caseLayout->addWidget(caseLabel);
@@ -316,6 +343,8 @@ int main(int argc, char* argv[])
   controlsLayout->addWidget(zoneCombo, 1);
   controlsLayout->addWidget(fieldLabel);
   controlsLayout->addWidget(fieldCombo, 1);
+  controlsLayout->addWidget(showNormalsCheck);
+  controlsLayout->addWidget(showFullTopologyCheck);
   controlsLayout->addWidget(statusLabel);
 
   auto* vtkWidget = new QVTKOpenGLNativeWidget(&window);
@@ -357,18 +386,166 @@ int main(int argc, char* argv[])
       mapper->SetInputData(emptyDisplayDataset);
       mapper->ScalarVisibilityOff();
       actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+      zoneCombo->setEnabled(!showFullTopologyCheck->isChecked());
       renderWindow->Render();
       return;
     }
 
-    const QString fieldName = fieldCombo->currentText();
-    const TopologyKind kind =
-      kindCombo->currentIndex() <= 0 ? TopologyKind::FaceZone : TopologyKind::CellZone;
+    zoneCombo->setEnabled(caseEdit->isEnabled() && !showFullTopologyCheck->isChecked());
 
-    if (kind == TopologyKind::FaceZone)
+    const QString fieldName = fieldCombo->currentText();
+    const TopologyKind kind = static_cast<TopologyKind>(kindCombo->currentIndex());
+    const bool fullTopology = showFullTopologyCheck->isChecked();
+
+    if (kind == TopologyKind::FaceNormals)
     {
-      const QString zoneName = zoneCombo->currentText();
-      if (zoneName.isEmpty())
+      vtkNew<vtkPoints> points;
+      vtkNew<vtkDoubleArray> normalArray;
+      normalArray->SetName("Normals");
+      normalArray->SetNumberOfComponents(3);
+      vtkNew<vtkDoubleArray> vectorIdx;
+      vectorIdx->SetName("VectorIdx");
+      vectorIdx->SetNumberOfComponents(1);
+
+      double bMin[3] = { 0.0, 0.0, 0.0 };
+      double bMax[3] = { 0.0, 0.0, 0.0 };
+      int zonesWithNormals = 0;
+
+      if (!fullTopology)
+      {
+        if (zoneCombo->currentIndex() < 0 || zoneCombo->count() == 0)
+        {
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+
+        const QVariant zoneIdVar = zoneCombo->currentData(kFaceZoneIdItemRole);
+        const int zoneId = zoneIdVar.isValid() ? zoneIdVar.toInt() : -1;
+
+        if (zoneId < 0)
+        {
+          statusLabel->setText("Zone not found");
+          return;
+        }
+
+        std::vector<float> centroids;
+        reader->GetFaceCentroidsByZone(zoneId, centroids);
+        std::vector<float> normals;
+        reader->GetFaceNormalsByZone(zoneId, normals);
+
+        if (centroids.empty() || normals.empty())
+        {
+          statusLabel->setText("No face data available");
+          return;
+        }
+
+        const int faceCount = static_cast<int>(centroids.size() / 3);
+        statusLabel->setText(QString("Showing %1 face normals").arg(faceCount));
+        if (faceCount > 0)
+        {
+          bMin[0] = bMax[0] = centroids[0];
+          bMin[1] = bMax[1] = centroids[1];
+          bMin[2] = bMax[2] = centroids[2];
+        }
+        for (int i = 0; i < faceCount; ++i)
+        {
+          const double x = centroids[i * 3];
+          const double y = centroids[i * 3 + 1];
+          const double z = centroids[i * 3 + 2];
+          points->InsertNextPoint(x, y, z);
+          normalArray->InsertNextTuple3(static_cast<double>(normals[i * 3]),
+            static_cast<double>(normals[i * 3 + 1]), static_cast<double>(normals[i * 3 + 2]));
+          vectorIdx->InsertNextValue(static_cast<double>(i));
+          bMin[0] = std::min(bMin[0], x);
+          bMin[1] = std::min(bMin[1], y);
+          bMin[2] = std::min(bMin[2], z);
+          bMax[0] = std::max(bMax[0], x);
+          bMax[1] = std::max(bMax[1], y);
+          bMax[2] = std::max(bMax[2], z);
+        }
+      }
+      else
+      {
+        if (reader->GetNumberOfFaceZones() <= 0)
+        {
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+
+        int globalIdx = 0;
+        bool boundsInit = false;
+        for (int zi = 0; zi < reader->GetNumberOfFaceZones(); ++zi)
+        {
+          const char* zn = reader->GetFaceZoneName(zi);
+          if (!zn)
+          {
+            continue;
+          }
+          const int zoneId = reader->GetFaceZoneIdByName(zn);
+          if (zoneId < 0)
+          {
+            continue;
+          }
+          std::vector<float> centroids;
+          reader->GetFaceCentroidsByZone(zoneId, centroids);
+          std::vector<float> normals;
+          reader->GetFaceNormalsByZone(zoneId, normals);
+          if (centroids.empty() || normals.empty())
+          {
+            continue;
+          }
+          ++zonesWithNormals;
+          const int fc = static_cast<int>(centroids.size() / 3);
+          for (int i = 0; i < fc; ++i)
+          {
+            const double x = centroids[i * 3];
+            const double y = centroids[i * 3 + 1];
+            const double z = centroids[i * 3 + 2];
+            points->InsertNextPoint(x, y, z);
+            normalArray->InsertNextTuple3(static_cast<double>(normals[i * 3]),
+              static_cast<double>(normals[i * 3 + 1]), static_cast<double>(normals[i * 3 + 2]));
+            vectorIdx->InsertNextValue(static_cast<double>(globalIdx++));
+            if (!boundsInit)
+            {
+              bMin[0] = bMax[0] = x;
+              bMin[1] = bMax[1] = y;
+              bMin[2] = bMax[2] = z;
+              boundsInit = true;
+            }
+            else
+            {
+              bMin[0] = std::min(bMin[0], x);
+              bMin[1] = std::min(bMin[1], y);
+              bMin[2] = std::min(bMin[2], z);
+              bMax[0] = std::max(bMax[0], x);
+              bMax[1] = std::max(bMax[1], y);
+              bMax[2] = std::max(bMax[2], z);
+            }
+          }
+        }
+
+        if (points->GetNumberOfPoints() == 0)
+        {
+          statusLabel->setText("No face data available (full topology)");
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+        statusLabel->setText(QStringLiteral("全拓扑: %1 个采样点（%2 个有边界数据的 face zone）")
+                               .arg(points->GetNumberOfPoints())
+                               .arg(zonesWithNormals));
+      }
+
+      const int faceCount = points->GetNumberOfPoints();
+      if (faceCount == 0)
       {
         mapper->SetInputData(emptyDisplayDataset);
         mapper->ScalarVisibilityOff();
@@ -377,88 +554,247 @@ int main(int argc, char* argv[])
         return;
       }
 
-      const QByteArray zoneUtf8 = zoneName.toUtf8();
-      const QByteArray fieldUtf8 = fieldName.toUtf8();
-      const char* colorArray = fieldName == QStringLiteral("Solid") ? nullptr : fieldUtf8.constData();
+      const double dx = bMax[0] - bMin[0];
+      const double dy = bMax[1] - bMin[1];
+      const double dz = bMax[2] - bMin[2];
+      const double diag = std::sqrt(dx * dx + dy * dy + dz * dz);
+      const double arrowLength = std::max(diag * 0.05, 1e-6);
 
-#if !defined(NDEBUG)
-      vtkSmartPointer<vtkPolyData> polyData;
+      vtkNew<vtkPolyData> normalsPolyData;
+      normalsPolyData->SetPoints(points);
+      normalsPolyData->GetPointData()->SetNormals(normalArray);
+      normalsPolyData->GetPointData()->SetScalars(vectorIdx);
+
+      const double idxMax = static_cast<double>(std::max(faceCount - 1, 1));
+      lookupTable->SetHueRange(0.667, 0.0);
+      lookupTable->SetTableRange(0.0, idxMax);
+      lookupTable->Build();
+      mapper->SetLookupTable(lookupTable);
+      mapper->SetScalarRange(0.0, idxMax);
+
+      if (showNormalsCheck->isChecked())
       {
-        const auto t0 = std::chrono::steady_clock::now();
-        polyData = reader->CreateFaceZonePolyData(zoneUtf8.constData(), colorArray, 0);
-        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::steady_clock::now() - t0)
-                          .count();
-        ViewerDebugLog("CreateFaceZonePolyData(\"" + std::string(zoneUtf8.constData()) + "\", " +
-          (colorArray ? std::string(colorArray) : std::string("nullptr")) + ", 0) " +
-          std::to_string(ms) + " ms");
-      }
-#else
-      vtkSmartPointer<vtkPolyData> polyData =
-        reader->CreateFaceZonePolyData(zoneUtf8.constData(), colorArray, 0);
-#endif
+        vtkNew<vtkArrowSource> arrowSource;
+        arrowSource->SetTipResolution(14);
+        arrowSource->SetShaftResolution(10);
+        arrowSource->SetTipLength(0.35);
+        arrowSource->SetTipRadius(0.11);
+        arrowSource->SetShaftRadius(0.04);
+        arrowSource->Update();
 
-      mapper->SetInputData(polyData);
-      ApplyColorRange(polyData, mapper, fieldName);
+        vtkNew<vtkGlyph3D> glyph;
+        glyph->SetSourceData(arrowSource->GetOutput());
+        glyph->SetInputData(normalsPolyData);
+        glyph->OrientOn();
+        glyph->SetVectorModeToUseNormal();
+        glyph->SetScaleModeToScaleByVector();
+        glyph->SetScaleFactor(arrowLength);
+        glyph->SetColorModeToColorByScalar();
+        glyph->Update();
+
+        mapper->SetInputConnection(glyph->GetOutputPort());
+        mapper->ScalarVisibilityOn();
+        mapper->SetScalarModeToUseCellData();
+        actor->GetProperty()->SetRepresentationToSurface();
+        actor->GetProperty()->SetLineWidth(1.0);
+      }
+      else
+      {
+        mapper->SetInputData(normalsPolyData);
+        mapper->ScalarVisibilityOn();
+        mapper->SetScalarModeToUsePointData();
+        mapper->SelectColorArray("VectorIdx");
+        actor->GetProperty()->SetRepresentationToPoints();
+        actor->GetProperty()->SetPointSize(8.0f);
+      }
+
+      renderWindow->Render();
+      return;
+    }
+    else if (kind == TopologyKind::FaceZone)
+    {
+      const QByteArray fieldUtf8 = (fieldName == QStringLiteral("Solid") || fieldName.isEmpty())
+        ? QByteArray()
+        : fieldName.toUtf8();
+      const char* faceArrayName = fieldUtf8.isEmpty() ? nullptr : fieldUtf8.constData();
+
+      vtkSmartPointer<vtkPolyData> facePd;
+
+      if (fullTopology)
+      {
+        vtkNew<vtkAppendPolyData> appendPd;
+        int zonesUsed = 0;
+        for (int zi = 0; zi < reader->GetNumberOfFaceZones(); ++zi)
+        {
+          const char* zn = reader->GetFaceZoneName(zi);
+          if (!zn)
+          {
+            continue;
+          }
+          vtkSmartPointer<vtkPolyData> zpd = reader->CreateFaceZonePolyData(zn, faceArrayName, 0);
+          if (zpd && zpd->GetNumberOfCells() > 0)
+          {
+            appendPd->AddInputData(zpd);
+            ++zonesUsed;
+          }
+        }
+        appendPd->Update();
+        facePd = appendPd->GetOutput();
+        if (!facePd || facePd->GetNumberOfCells() == 0)
+        {
+          statusLabel->setText(QStringLiteral("无 face zone 几何（全拓扑）"));
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+        statusLabel->setText(QStringLiteral("全拓扑 Face zone: %1 个 zone 已合并").arg(zonesUsed));
+      }
+      else
+      {
+        const int zoneIndex = zoneCombo->currentIndex();
+        if (zoneIndex < 0 || zoneIndex >= reader->GetNumberOfFaceZones())
+        {
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+
+        const char* zoneName = reader->GetFaceZoneName(zoneIndex);
+        if (!zoneName)
+        {
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+
+        facePd = reader->CreateFaceZonePolyData(zoneName, faceArrayName, 0);
+        if (!facePd || facePd->GetNumberOfCells() == 0)
+        {
+          statusLabel->setText("No face zone geometry");
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+      }
+
+      mapper->SetInputData(facePd);
+      actor->GetProperty()->SetRepresentationToSurface();
+      actor->GetProperty()->SetPointSize(1);
+      ApplyColorRange(facePd, mapper, fieldName);
     }
     else
     {
-      const int blockIndex = zoneCombo->currentIndex();
-      if (blockIndex < 0 || blockIndex >= reader->GetCellZoneCount())
-      {
-        mapper->SetInputData(emptyDisplayDataset);
-        mapper->ScalarVisibilityOff();
-        actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
-        renderWindow->Render();
-        return;
-      }
-
       vtkMultiBlockDataSet* mb = reader->GetOutput();
-      if (!mb || static_cast<unsigned int>(blockIndex) >= mb->GetNumberOfBlocks())
-      {
-        mapper->SetInputData(emptyDisplayDataset);
-        mapper->ScalarVisibilityOff();
-        actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
-        renderWindow->Render();
-        return;
-      }
+      vtkUnstructuredGrid* displayUg = nullptr;
 
-      auto* ug =
-        vtkUnstructuredGrid::SafeDownCast(mb->GetBlock(static_cast<unsigned int>(blockIndex)));
-      if (!ug)
+      if (fullTopology)
       {
-        mapper->SetInputData(emptyDisplayDataset);
-        mapper->ScalarVisibilityOff();
-        actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
-        renderWindow->Render();
-        return;
-      }
-
-      mapper->SetInputData(ug);
-#if !defined(NDEBUG)
-      {
-        vtkIdType nCells = ug->GetNumberOfCells();
-        vtkIdType nPts = ug->GetNumberOfPoints();
-        std::string info = "Cell zone block " + std::to_string(blockIndex) +
-          " cells=" + std::to_string(nCells) +
-          " points=" + std::to_string(nPts);
-        if (nCells > 0 && nCells <= 500000)
+        const int nBlocks = reader->GetCellZoneCount();
+        if (!mb || nBlocks <= 0)
         {
-          std::array<vtkIdType, 16> tc{};
-          for (vtkIdType ci = 0; ci < nCells; ++ci)
-          {
-            int ct = ug->GetCellType(ci);
-            if (ct >= 0 && ct < 16) tc[static_cast<std::size_t>(ct)]++;
-            else tc[15]++;
-          }
-          for (int t = 0; t < 16; ++t)
-            if (tc[static_cast<std::size_t>(t)] > 0)
-              info += " VTK_" + std::to_string(t) + "=" + std::to_string(tc[static_cast<std::size_t>(t)]);
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
         }
-        ViewerDebugLog(info);
-      }
+
+        vtkNew<vtkAppendFilter> appendUg;
+        int blocksUsed = 0;
+        for (int bi = 0; bi < nBlocks; ++bi)
+        {
+          auto* ug = vtkUnstructuredGrid::SafeDownCast(mb->GetBlock(static_cast<unsigned int>(bi)));
+          if (ug && ug->GetNumberOfCells() > 0)
+          {
+            appendUg->AddInputData(ug);
+            ++blocksUsed;
+          }
+        }
+        appendUg->Update();
+        displayUg = appendUg->GetOutput();
+        if (!displayUg || displayUg->GetNumberOfCells() == 0)
+        {
+          statusLabel->setText(QStringLiteral("无 cell zone 块（全拓扑）"));
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+        statusLabel->setText(QStringLiteral("全拓扑 Cell zone: %1 个 block 已合并").arg(blocksUsed));
+#if !defined(NDEBUG)
+        ViewerDebugLog("Cell full topology cells=" + std::to_string(displayUg->GetNumberOfCells()) +
+          " points=" + std::to_string(displayUg->GetNumberOfPoints()));
 #endif
-      ApplyColorRange(ug, mapper, fieldName);
+      }
+      else
+      {
+        const int blockIndex = zoneCombo->currentIndex();
+        if (blockIndex < 0 || blockIndex >= reader->GetCellZoneCount())
+        {
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+
+        if (!mb || static_cast<unsigned int>(blockIndex) >= mb->GetNumberOfBlocks())
+        {
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+
+        displayUg =
+          vtkUnstructuredGrid::SafeDownCast(mb->GetBlock(static_cast<unsigned int>(blockIndex)));
+        if (!displayUg)
+        {
+          mapper->SetInputData(emptyDisplayDataset);
+          mapper->ScalarVisibilityOff();
+          actor->GetProperty()->SetColor(colors->GetColor3d("Gainsboro").GetData());
+          renderWindow->Render();
+          return;
+        }
+#if !defined(NDEBUG)
+        {
+          vtkIdType nCells = displayUg->GetNumberOfCells();
+          vtkIdType nPts = displayUg->GetNumberOfPoints();
+          std::string info = "Cell zone block " + std::to_string(blockIndex) +
+            " cells=" + std::to_string(nCells) +
+            " points=" + std::to_string(nPts);
+          if (nCells > 0 && nCells <= 500000)
+          {
+            std::array<vtkIdType, 16> tc{};
+            for (vtkIdType ci = 0; ci < nCells; ++ci)
+            {
+              int ct = displayUg->GetCellType(ci);
+              if (ct >= 0 && ct < 16) tc[static_cast<std::size_t>(ct)]++;
+              else tc[15]++;
+            }
+            for (int t = 0; t < 16; ++t)
+              if (tc[static_cast<std::size_t>(t)] > 0)
+                info += " VTK_" + std::to_string(t) + "=" + std::to_string(tc[static_cast<std::size_t>(t)]);
+          }
+          ViewerDebugLog(info);
+        }
+#endif
+      }
+
+      mapper->SetInputData(displayUg);
+      actor->GetProperty()->SetRepresentationToSurface();
+      actor->GetProperty()->SetPointSize(1);
+      ApplyColorRange(displayUg, mapper, fieldName);
     }
 
     if (fieldName == QStringLiteral("Solid") || !mapper->GetScalarVisibility())
@@ -476,8 +812,10 @@ int main(int argc, char* argv[])
     dataBrowseButton->setEnabled(!isLoading);
     loadButton->setEnabled(!isLoading);
     kindCombo->setEnabled(!isLoading);
-    zoneCombo->setEnabled(!isLoading);
+    zoneCombo->setEnabled(!isLoading && !showFullTopologyCheck->isChecked());
     fieldCombo->setEnabled(!isLoading);
+    showNormalsCheck->setEnabled(!isLoading);
+    showFullTopologyCheck->setEnabled(!isLoading);
     statusLabel->setText(text);
   };
 
@@ -593,14 +931,16 @@ int main(int argc, char* argv[])
     {
       QSignalBlocker zoneBlocker(zoneCombo);
       QSignalBlocker fieldBlocker(fieldCombo);
-      const TopologyKind kind =
-        kindCombo->currentIndex() <= 0 ? TopologyKind::FaceZone : TopologyKind::CellZone;
-      if (kind == TopologyKind::FaceZone)
+      const TopologyKind kind = static_cast<TopologyKind>(kindCombo->currentIndex());
+      if (kind == TopologyKind::FaceZone || kind == TopologyKind::FaceNormals)
       {
-        preferredZoneIndex = PopulateFaceZones(zoneCombo, reader);
-        PopulateFaceArrays(fieldCombo, reader);
+        preferredZoneIndex = PopulateFaceZones(zoneCombo, reader, kind == TopologyKind::FaceNormals);
+        if (kind == TopologyKind::FaceZone)
+        {
+          PopulateFaceArrays(fieldCombo, reader);
+        }
       }
-      else
+      else if (kind == TopologyKind::CellZone)
       {
         preferredZoneIndex = PopulateCellZones(zoneCombo, reader);
         PopulateCellArrays(fieldCombo, reader);
@@ -663,14 +1003,16 @@ int main(int argc, char* argv[])
       {
         QSignalBlocker zoneBlocker(zoneCombo);
         QSignalBlocker fieldBlocker(fieldCombo);
-        const TopologyKind kind =
-          kindCombo->currentIndex() <= 0 ? TopologyKind::FaceZone : TopologyKind::CellZone;
-        if (kind == TopologyKind::FaceZone)
+        const TopologyKind kind = static_cast<TopologyKind>(kindCombo->currentIndex());
+        if (kind == TopologyKind::FaceZone || kind == TopologyKind::FaceNormals)
         {
-          preferredZoneIndex = PopulateFaceZones(zoneCombo, reader);
-          PopulateFaceArrays(fieldCombo, reader);
+          preferredZoneIndex = PopulateFaceZones(zoneCombo, reader, kind == TopologyKind::FaceNormals);
+          if (kind == TopologyKind::FaceZone)
+          {
+            PopulateFaceArrays(fieldCombo, reader);
+          }
         }
-        else
+        else if (kind == TopologyKind::CellZone)
         {
           preferredZoneIndex = PopulateCellZones(zoneCombo, reader);
           PopulateCellArrays(fieldCombo, reader);
@@ -737,6 +1079,21 @@ int main(int argc, char* argv[])
   {
     loadFiles();
   }
+
+  QObject::connect(showNormalsCheck, &QCheckBox::toggled, &window, [&](bool) {
+    updateView();
+  });
+  QObject::connect(showFullTopologyCheck, &QCheckBox::toggled, &window, [&](bool) {
+    if (reader)
+    {
+      zoneCombo->setEnabled(caseEdit->isEnabled() && !showFullTopologyCheck->isChecked());
+    }
+    else
+    {
+      zoneCombo->setEnabled(!showFullTopologyCheck->isChecked());
+    }
+    updateView();
+  });
 
   window.resize(1480, 960);
   window.show();

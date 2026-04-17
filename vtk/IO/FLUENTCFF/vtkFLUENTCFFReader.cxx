@@ -276,11 +276,12 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
     const auto getNumCellZones0 = std::chrono::steady_clock::now();
 #endif
     this->GetNumberOfCellZones();
+    this->BuildGraphData();
 #if !defined(NDEBUG)
     {
       const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - getNumCellZones0).count();
-      FluentCffDebugLog("GetNumberOfCellZones " + std::to_string(ms) + " ms");
+      FluentCffDebugLog("GetNumberOfCellZones + BuildGraphData " + std::to_string(ms) + " ms");
     }
 #endif
   }
@@ -350,7 +351,8 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
   }
   for (vtkIdType cellId = 0; cellId < static_cast<vtkIdType>(this->Cells.size()); ++cellId)
   {
-    const auto zoneIt = zoneToLocation.find(this->Cells[static_cast<std::size_t>(cellId)].zone);
+    const int zoneId = this->GetCellZoneId(cellId);
+    const auto zoneIt = zoneToLocation.find(zoneId);
     if (zoneIt != zoneToLocation.end())
     {
       this->CellIndicesByZone[zoneIt->second].push_back(cellId);
@@ -735,7 +737,7 @@ void vtkFLUENTCFFReader::ParseUDMData(
     {
       for (std::size_t location = 0; location < this->CellZones.size(); ++location)
       {
-        if (this->Cells[static_cast<std::size_t>(cellId)].zone == this->CellZones[location])
+        if (this->GetCellZoneId(cellId) == this->CellZones[location])
         {
           this->CellIndicesByZone[location].push_back(cellId);
           break;
@@ -1036,6 +1038,12 @@ int vtkFLUENTCFFReader::GetNumberOfFaceZones() const
 }
 
 //------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetFaceZoneCount() const
+{
+  return static_cast<int>(this->FaceZones.size());
+}
+
+//------------------------------------------------------------------------------
 const char* vtkFLUENTCFFReader::GetFaceZoneName(int index) const
 {
   return (index >= 0 && static_cast<std::size_t>(index) < this->FaceZones.size())
@@ -1109,6 +1117,48 @@ int vtkFLUENTCFFReader::GetFaceIdByZoneName(const char* name, vtkIdType localFac
 }
 
 //------------------------------------------------------------------------------
+const char* vtkFLUENTCFFReader::GetFaceZoneNameById(int zoneId) const
+{
+  for (const auto& fz : this->FaceZones)
+  {
+    if (fz.id == zoneId)
+    {
+      return fz.name.c_str();
+    }
+  }
+  return nullptr;
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetFaceZoneType(int zoneId) const
+{
+  for (const auto& fz : this->FaceZones)
+  {
+    if (fz.id == zoneId)
+    {
+      return fz.zoneType;
+    }
+  }
+  return -1;
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetCellZoneType(int zoneId) const
+{
+  for (std::size_t i = 0; i < this->CellZones.size(); ++i)
+  {
+    if (this->CellZones[i] == zoneId)
+    {
+      if (i < this->CellZonesType.size())
+      {
+        return this->CellZonesType[i];
+      }
+    }
+  }
+  return -1;
+}
+
+//------------------------------------------------------------------------------
 int vtkFLUENTCFFReader::GetCellZoneCount() const
 {
   return static_cast<int>(this->CellZones.size());
@@ -1147,9 +1197,36 @@ int vtkFLUENTCFFReader::GetCellType(vtkIdType cellId) const
 //------------------------------------------------------------------------------
 int vtkFLUENTCFFReader::GetCellZoneId(vtkIdType cellId) const
 {
-  return (cellId >= 0 && static_cast<std::size_t>(cellId) < this->Cells.size())
-    ? this->Cells[static_cast<std::size_t>(cellId)].zone
-    : -1;
+  if (cellId < 0 || static_cast<std::size_t>(cellId) >= this->Cells.size())
+  {
+    return -1;
+  }
+  const std::size_t idx = static_cast<std::size_t>(cellId);
+  return idx < this->CellIdToZoneId.size() ? this->CellIdToZoneId[idx] : -1;
+}
+
+//------------------------------------------------------------------------------
+void vtkFLUENTCFFReader::GetCellCentroidsByZone(int zoneId, std::vector<float>& centroids) const
+{
+  centroids.clear();
+  auto it = this->CellZoneIdToCellSpan.find(zoneId);
+  if (it == this->CellZoneIdToCellSpan.end())
+  {
+    return;
+  }
+  const vtkIdType first = it->second.firstCellId;
+  const vtkIdType count = it->second.count;
+  if (first < 0 || count <= 0)
+  {
+    return;
+  }
+  const std::size_t begin = static_cast<std::size_t>(first) * 3;
+  const std::size_t end = begin + static_cast<std::size_t>(count) * 3;
+  if (end > this->CellCentroids.size())
+  {
+    return;
+  }
+  centroids.insert(centroids.end(), this->CellCentroids.begin() + begin, this->CellCentroids.begin() + end);
 }
 
 //------------------------------------------------------------------------------
@@ -1219,9 +1296,12 @@ int vtkFLUENTCFFReader::GetFaceType(vtkIdType faceId) const
 //------------------------------------------------------------------------------
 int vtkFLUENTCFFReader::GetFaceZoneId(vtkIdType faceId) const
 {
-  return (faceId >= 0 && static_cast<std::size_t>(faceId) < this->Faces.size())
-    ? static_cast<int>(this->Faces[static_cast<std::size_t>(faceId)].zone)
-    : -1;
+  if (faceId < 0 || static_cast<std::size_t>(faceId) >= this->Faces.size())
+  {
+    return -1;
+  }
+  const std::size_t idx = static_cast<std::size_t>(faceId);
+  return idx < this->FaceIdToZoneId.size() ? this->FaceIdToZoneId[idx] : -1;
 }
 
 //------------------------------------------------------------------------------
@@ -1262,6 +1342,115 @@ int vtkFLUENTCFFReader::GetFaceC1(vtkIdType faceId) const
   return (faceId >= 0 && static_cast<std::size_t>(faceId) < this->Faces.size())
     ? this->Faces[static_cast<std::size_t>(faceId)].c1
     : -1;
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetCellCentroidCount() const
+{
+  return this->CellCentroids.size() / 3;
+}
+
+//------------------------------------------------------------------------------
+const float* vtkFLUENTCFFReader::GetCellCentroids() const
+{
+  return this->CellCentroids.empty() ? nullptr : this->CellCentroids.data();
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetEdgeCount() const
+{
+  return static_cast<int>(this->EdgeIndexSrc.size());
+}
+
+//------------------------------------------------------------------------------
+void vtkFLUENTCFFReader::GetEdgeIndex(std::vector<int>& src, std::vector<int>& dst) const
+{
+  src = this->EdgeIndexSrc;
+  dst = this->EdgeIndexDst;
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetFaceBoundaryType(vtkIdType faceId) const
+{
+  if (faceId < 0 || static_cast<std::size_t>(faceId) >= this->Faces.size())
+  {
+    return -1;
+  }
+  const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+  // 内部面：c0 >= 0 且 c1 >= 0
+  // 边界面：c0 >= 0 且 c1 < 0（或反之）
+  if (face.c0 >= 0 && face.c1 >= 0)
+  {
+    return 0;  // 内部
+  }
+  return 1;  // 边界
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetBoundaryFaceCount() const
+{
+  return static_cast<int>(this->FaceCentroids.size() / 3);
+}
+
+//------------------------------------------------------------------------------
+const float* vtkFLUENTCFFReader::GetFaceCentroids() const
+{
+  return this->FaceCentroids.empty() ? nullptr : this->FaceCentroids.data();
+}
+
+//------------------------------------------------------------------------------
+const float* vtkFLUENTCFFReader::GetFaceNormals() const
+{
+  return this->FaceNormals.empty() ? nullptr : this->FaceNormals.data();
+}
+
+//------------------------------------------------------------------------------
+void vtkFLUENTCFFReader::GetFaceCentroidsByZone(int zoneId, std::vector<float>& centroids) const
+{
+  //*这里显然可以优化，FaceZone对应的对于FaceId最大最小的索引是已知的，Centroids也是根据Faceid建立的。直接整段复制就行了，为什么要整段推送呢？
+  centroids.clear();
+  auto it = this->FaceZoneIdToBoundarySpan.find(zoneId);
+  if (it == this->FaceZoneIdToBoundarySpan.end())
+  {
+    return;
+  }
+  const vtkIdType first = it->second.firstBoundaryFaceIndex;
+  const vtkIdType count = it->second.count;
+  if (first < 0 || count <= 0)
+  {
+    return;
+  }
+  const std::size_t begin = static_cast<std::size_t>(first) * 3;
+  const std::size_t end = begin + static_cast<std::size_t>(count) * 3;
+  if (end > this->FaceCentroids.size())
+  {
+    return;
+  }
+  centroids.insert(centroids.end(), this->FaceCentroids.begin() + begin, this->FaceCentroids.begin() + end);
+}
+
+//------------------------------------------------------------------------------
+void vtkFLUENTCFFReader::GetFaceNormalsByZone(int zoneId, std::vector<float>& normals) const
+{
+  normals.clear();
+  auto it = this->FaceZoneIdToBoundarySpan.find(zoneId);
+  if (it == this->FaceZoneIdToBoundarySpan.end())
+  {
+    return;
+  }
+  const vtkIdType first = it->second.firstBoundaryFaceIndex;
+  const vtkIdType count = it->second.count;
+  if (first < 0 || count <= 0)
+  {
+    return;
+  }
+  const std::size_t begin = static_cast<std::size_t>(first) * 3;
+  const std::size_t end = begin + static_cast<std::size_t>(count) * 3;
+  if (end > this->FaceNormals.size())
+  {
+    return;
+  }
+  normals.insert(normals.end(), this->FaceNormals.begin() + begin, this->FaceNormals.begin() + end);
 }
 
 //------------------------------------------------------------------------------
@@ -1509,25 +1698,227 @@ vtkSmartPointer<vtkPolyData> vtkFLUENTCFFReader::CreateFaceZonePolyData(
 //------------------------------------------------------------------------------
 void vtkFLUENTCFFReader::GetNumberOfCellZones()
 {
-  for (const auto& cell : this->Cells)
+  this->CellZones.clear();
+  this->CellZones.reserve(this->CellZonesInfo.size());
+  for (const auto& zi : this->CellZonesInfo)
   {
-    if (this->CellZones.empty())
+    if (zi.id >= 0)
     {
-      this->CellZones.push_back(cell.zone);
+      this->CellZones.push_back(zi.id);
+    }
+  }
+}
+
+//------------------------------------------------------------------------------
+void vtkFLUENTCFFReader::BuildGraphData()
+{
+  // Build edge_index from face c0/c1 adjacency
+  this->EdgeIndexSrc.clear();
+  this->EdgeIndexDst.clear();
+  for (const auto& face : this->Faces)
+  {
+    if (face.c0 >= 0 && face.c1 >= 0)
+    {
+      this->EdgeIndexSrc.push_back(face.c0);
+      this->EdgeIndexDst.push_back(face.c1);
+      // Add reverse edge for undirected graph
+      this->EdgeIndexSrc.push_back(face.c1);
+      this->EdgeIndexDst.push_back(face.c0);
+    }
+  }
+
+  // Compute cell centroids (simplified: node average as centroid)
+  this->CellCentroids.clear();
+  this->CellCentroids.resize(this->Cells.size() * 3, 0.0f);
+  for (std::size_t i = 0; i < this->Cells.size(); ++i)
+  {
+    const auto& cell = this->Cells[i];
+    std::vector<int> nodeIds;
+
+    // Get node IDs for this cell
+    if (cell.nodePoolCount > 0)
+    {
+      for (int j = 0; j < cell.nodePoolCount; ++j)
+      {
+        std::size_t poolIdx = static_cast<std::size_t>(cell.nodePoolOffset + j);
+        if (poolIdx < this->CellNodePool.size())
+        {
+          nodeIds.push_back(this->CellNodePool[poolIdx]);
+        }
+      }
     }
     else
     {
-      int match = 0;
-      for (const auto& CellZone : CellZones)
+      nodeIds = cell.nodes;
+    }
+
+    if (!nodeIds.empty())
+    {
+      double sumX = 0, sumY = 0, sumZ = 0;
+      int validCount = 0;
+      for (int nodeId : nodeIds)
       {
-        if (CellZone == cell.zone)
+        if (nodeId >= 0 && nodeId < this->Points->GetNumberOfPoints())
         {
-          match = 1;
+          double coords[3];
+          this->Points->GetPoint(nodeId, coords);
+          sumX += coords[0];
+          sumY += coords[1];
+          sumZ += coords[2];
+          ++validCount;
         }
       }
-      if (match == 0)
+      if (validCount > 0)
       {
-        this->CellZones.push_back(cell.zone);
+        this->CellCentroids[i * 3 + 0] = static_cast<float>(sumX / validCount);
+        this->CellCentroids[i * 3 + 1] = static_cast<float>(sumY / validCount);
+        this->CellCentroids[i * 3 + 2] = static_cast<float>(sumZ / validCount);
+      }
+    }
+  }
+  // Compute boundary face centroids and normals
+  this->FaceCentroids.clear();
+  this->FaceNormals.clear();
+  this->FaceZoneIdToBoundarySpan.clear();
+
+  // Build zoneId -> zoneType map
+  std::map<int, int> zoneIdToType;
+  for (const auto& fz : this->FaceZones)
+  {
+    zoneIdToType[fz.id] = fz.zoneType;
+  }
+
+#if !defined(NDEBUG)
+  // Debug: print zone info
+  FluentCffDebugLog("FaceZones count=" + std::to_string(this->FaceZones.size()));
+  for (const auto& fz : this->FaceZones)
+  {
+    FluentCffDebugLog("  FaceZone: name=" + fz.name + " id=" + std::to_string(fz.id) + " zoneType=" + std::to_string(fz.zoneType));
+  }
+#endif
+
+  for (const auto& fz : this->FaceZones)
+  {
+    const int zoneId = fz.id;
+    auto itType = zoneIdToType.find(zoneId);
+    if (itType == zoneIdToType.end())
+    {
+      continue;
+    }
+    // zoneType 2 = interior, skip
+    if (itType->second == 2)
+    {
+      continue;
+    }
+    if (fz.firstFaceId < 0 || fz.lastFaceId < fz.firstFaceId)
+    {
+      continue;
+    }
+
+    const vtkIdType zoneFaceCount = fz.lastFaceId - fz.firstFaceId + 1;
+    const vtkIdType firstBoundaryIndex = static_cast<vtkIdType>(this->FaceCentroids.size() / 3);
+    this->FaceZoneIdToBoundarySpan[zoneId] = { firstBoundaryIndex, zoneFaceCount };
+
+    // Reserve once for contiguous append.
+    this->FaceCentroids.reserve(this->FaceCentroids.size() + static_cast<std::size_t>(zoneFaceCount) * 3);
+    this->FaceNormals.reserve(this->FaceNormals.size() + static_cast<std::size_t>(zoneFaceCount) * 3);
+
+    for (vtkIdType faceId = fz.firstFaceId; faceId <= fz.lastFaceId; ++faceId)
+    {
+      if (faceId < 0 || static_cast<std::size_t>(faceId) >= this->Faces.size())
+      {
+        // Keep strict per-face count; append placeholders.
+        this->FaceCentroids.push_back(0.0f);
+        this->FaceCentroids.push_back(0.0f);
+        this->FaceCentroids.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        continue;
+      }
+
+      const auto& face = this->Faces[static_cast<std::size_t>(faceId)];
+      if (face.nodeCount < 3)
+      {
+        this->FaceCentroids.push_back(0.0f);
+        this->FaceCentroids.push_back(0.0f);
+        this->FaceCentroids.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        continue;
+      }
+
+      double sumX = 0, sumY = 0, sumZ = 0;
+      int validNodes = 0;
+      for (int j = 0; j < face.nodeCount && j < 1024; ++j)
+      {
+        const std::size_t poolIdx = static_cast<std::size_t>(face.nodeOffset + j);
+        if (poolIdx < this->FaceNodePool.size())
+        {
+          const int nodeId = this->FaceNodePool[poolIdx];
+          if (nodeId >= 0 && nodeId < this->Points->GetNumberOfPoints())
+          {
+            double coords[3];
+            this->Points->GetPoint(nodeId, coords);
+            sumX += coords[0];
+            sumY += coords[1];
+            sumZ += coords[2];
+            ++validNodes;
+          }
+        }
+      }
+
+      if (validNodes < 3)
+      {
+        this->FaceCentroids.push_back(0.0f);
+        this->FaceCentroids.push_back(0.0f);
+        this->FaceCentroids.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        continue;
+      }
+
+      this->FaceCentroids.push_back(static_cast<float>(sumX / validNodes));
+      this->FaceCentroids.push_back(static_cast<float>(sumY / validNodes));
+      this->FaceCentroids.push_back(static_cast<float>(sumZ / validNodes));
+
+      // Normal via cross product (first 3 nodes)
+      double a[3], b[3], c[3];
+      const std::size_t p0 = static_cast<std::size_t>(face.nodeOffset);
+      const std::size_t p1 = p0 + 1;
+      const std::size_t p2 = p0 + 2;
+      if (p2 < this->FaceNodePool.size())
+      {
+        this->Points->GetPoint(this->FaceNodePool[p0], a);
+        this->Points->GetPoint(this->FaceNodePool[p1], b);
+        this->Points->GetPoint(this->FaceNodePool[p2], c);
+        const double v1x = b[0] - a[0];
+        const double v1y = b[1] - a[1];
+        const double v1z = b[2] - a[2];
+        const double v2x = c[0] - a[0];
+        const double v2y = c[1] - a[1];
+        const double v2z = c[2] - a[2];
+        double nx = v1y * v2z - v1z * v2y;
+        double ny = v1z * v2x - v1x * v2z;
+        double nz = v1x * v2y - v1y * v2x;
+        const double len = sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 1e-10)
+        {
+          nx /= len;
+          ny /= len;
+          nz /= len;
+        }
+        this->FaceNormals.push_back(static_cast<float>(nx));
+        this->FaceNormals.push_back(static_cast<float>(ny));
+        this->FaceNormals.push_back(static_cast<float>(nz));
+      }
+      else
+      {
+        this->FaceNormals.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
+        this->FaceNormals.push_back(0.0f);
       }
     }
   }
@@ -1893,6 +2284,8 @@ void vtkFLUENTCFFReader::GetCellsGlobal()
   CHECK_HDF(H5Aclose(attr));
   CHECK_HDF(H5Gclose(group));
   this->Cells.resize(lastIndex);
+  this->CellIdToZoneId.clear();
+  this->CellIdToZoneId.resize(static_cast<std::size_t>(lastIndex), -1);
 }
 
 //------------------------------------------------------------------------------
@@ -1967,6 +2360,10 @@ void vtkFLUENTCFFReader::GetCells()
   CHECK_HDF(H5Dread(dset, H5T_NATIVE_INT32, H5S_ALL, H5S_ALL, H5P_DEFAULT, childZoneId.data()));
   CHECK_HDF(H5Dclose(dset));
 
+  this->CellZonesInfo.clear();
+  this->CellZonesInfo.reserve(static_cast<std::size_t>(nZones));
+  this->CellZoneIdToCellSpan.clear();
+
   for (uint64_t iZone = 0; iZone < nZones; iZone++)
   {
     unsigned int elementType = static_cast<unsigned int>(cellType[iZone]);
@@ -1977,6 +2374,14 @@ void vtkFLUENTCFFReader::GetCells()
     // containing tree format (AMR)
     //// unsigned int child = static_cast<unsigned int>(childZoneId[iZone]);
     // next child and parent variable should be initialized correctly
+
+    const vtkIdType firstCellId0 = static_cast<vtkIdType>(firstIndex - 1);
+    const vtkIdType lastCellId0 = static_cast<vtkIdType>(lastIndex - 1);
+    this->CellZonesInfo.push_back({ static_cast<int>(zoneId), firstCellId0, lastCellId0 });
+    if (firstCellId0 >= 0 && lastCellId0 >= firstCellId0)
+    {
+      this->CellZoneIdToCellSpan[static_cast<int>(zoneId)] = { firstCellId0, lastCellId0 - firstCellId0 + 1 };
+    }
 
     if (elementType == 0)
     {
@@ -2056,7 +2461,10 @@ void vtkFLUENTCFFReader::GetCells()
         for (unsigned int i = firstIndex; i <= lastIndex; i++)
         {
           this->Cells[i - 1].type = static_cast<unsigned int>(cellTypeData[i - ctype_minId]);
-          this->Cells[i - 1].zone = zoneId;
+          if (static_cast<std::size_t>(i - 1) < this->CellIdToZoneId.size())
+          {
+            this->CellIdToZoneId[static_cast<std::size_t>(i - 1)] = static_cast<int>(zoneId);
+          }
           this->Cells[i - 1].parent = 0;
           this->Cells[i - 1].child = 0;
         }
@@ -2067,7 +2475,10 @@ void vtkFLUENTCFFReader::GetCells()
       for (unsigned int i = firstIndex; i <= lastIndex; i++)
       {
         this->Cells[i - 1].type = elementType;
-        this->Cells[i - 1].zone = zoneId;
+        if (static_cast<std::size_t>(i - 1) < this->CellIdToZoneId.size())
+        {
+          this->CellIdToZoneId[static_cast<std::size_t>(i - 1)] = static_cast<int>(zoneId);
+        }
         this->Cells[i - 1].parent = 0;
         this->Cells[i - 1].child = 0;
       }
@@ -2103,6 +2514,8 @@ void vtkFLUENTCFFReader::GetFacesGlobal()
   CHECK_HDF(H5Aclose(attr));
   CHECK_HDF(H5Gclose(group));
   this->Faces.resize(lastIndex);
+  this->FaceIdToZoneId.clear();
+  this->FaceIdToZoneId.resize(static_cast<std::size_t>(lastIndex), -1);
   // Reserve one contiguous node pool for all faces.
   this->FaceNodePool.clear();
   this->FaceNodePool.reserve(static_cast<std::size_t>(lastIndex) * 4);
@@ -2230,9 +2643,9 @@ void vtkFLUENTCFFReader::GetFaces()
     unsigned int firstIndex = static_cast<unsigned int>(minId[iZone]);
     unsigned int lastIndex = static_cast<unsigned int>(maxId[iZone]);
     this->FaceZones.push_back({ iZone < zoneNames.size() ? zoneNames[iZone]
-                                                         : std::string("zone_") + std::to_string(zoneId),
+                                                         : std::string("invalid_zone_") + std::to_string(zoneId),
       static_cast<int>(zoneId), static_cast<vtkIdType>(firstIndex - 1),
-      static_cast<vtkIdType>(lastIndex - 1) });
+      static_cast<vtkIdType>(lastIndex - 1), static_cast<int>(zoneT[iZone]) });
     // This next lines should be uncommented following test with Fluent file
     // containing tree format (AMR) and interface faces
     //// unsigned int child = static_cast<unsigned int>(childZoneId[iZone]);
@@ -2241,14 +2654,20 @@ void vtkFLUENTCFFReader::GetFaces()
 
     for (unsigned int i = firstIndex; i <= lastIndex; i++)
     {
-      this->Faces[i - 1].zone = zoneId;
-      this->Faces[i - 1].periodicShadow = 0;
-      this->Faces[i - 1].parent = 0;
-      this->Faces[i - 1].child = 0;
-      this->Faces[i - 1].interfaceFaceParent = 0;
-      this->Faces[i - 1].ncgParent = 0;
-      this->Faces[i - 1].ncgChild = 0;
-      this->Faces[i - 1].interfaceFaceChild = 0;
+      if (static_cast<std::size_t>(i - 1) < this->Faces.size())
+      {
+        if (static_cast<std::size_t>(i - 1) < this->FaceIdToZoneId.size())
+        {
+          this->FaceIdToZoneId[static_cast<std::size_t>(i - 1)] = static_cast<int>(zoneId);
+        }
+        this->Faces[i - 1].periodicShadow = 0;
+        this->Faces[i - 1].parent = 0;
+        this->Faces[i - 1].child = 0;
+        this->Faces[i - 1].interfaceFaceParent = 0;
+        this->Faces[i - 1].ncgParent = 0;
+        this->Faces[i - 1].ncgChild = 0;
+        this->Faces[i - 1].interfaceFaceChild = 0;
+      }
     }
   }
 
