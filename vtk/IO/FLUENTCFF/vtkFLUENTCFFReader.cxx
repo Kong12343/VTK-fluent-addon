@@ -294,6 +294,7 @@ int vtkFLUENTCFFReader::RequestData(vtkInformation* vtkNotUsed(request),
   this->NumberOfArrays = 0;
   if (this->FileState == DataState::AVAILABLE)
   {
+    this->ApplyExcludedFieldArrayNames();
     int flagData = 0;
     try
     {
@@ -1029,6 +1030,39 @@ void vtkFLUENTCFFReader::EnableAllFaceArrays()
 void vtkFLUENTCFFReader::DisableAllFaceArrays()
 {
   this->FaceDataArraySelection->DisableAllArrays();
+}
+
+//------------------------------------------------------------------------------
+void vtkFLUENTCFFReader::SetExcludedFieldArrayNames(const std::vector<std::string>& names)
+{
+  this->ExcludedFieldArrayNames = names;
+  this->Modified();
+}
+
+//------------------------------------------------------------------------------
+void vtkFLUENTCFFReader::ClearExcludedFieldArrayNames()
+{
+  this->ExcludedFieldArrayNames.clear();
+  this->Modified();
+}
+
+//------------------------------------------------------------------------------
+const std::vector<std::string>& vtkFLUENTCFFReader::GetExcludedFieldArrayNames() const
+{
+  return this->ExcludedFieldArrayNames;
+}
+
+//------------------------------------------------------------------------------
+void vtkFLUENTCFFReader::ApplyExcludedFieldArrayNames()
+{
+  // Selection state persists across updates: re-enable all known arrays, then disable excluded.
+  this->EnableAllCellArrays();
+  this->EnableAllFaceArrays();
+  for (const auto& name : this->ExcludedFieldArrayNames)
+  {
+    this->SetCellArrayStatus(name.c_str(), 0);
+    this->SetFaceArrayStatus(name.c_str(), 0);
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -4130,14 +4164,6 @@ int vtkFLUENTCFFReader::ReadDataForType(const std::string& groupName,
   chunks.reserve(chunks.size() + fieldNames.size());
   for (auto originalFieldName : fieldNames)
   {
-    hid_t groupdata = H5Gopen(group, originalFieldName.c_str(), H5P_DEFAULT);
-    if (groupdata < 0)
-    {
-      CHECK_HDF(H5Gclose(group));
-      vtkErrorMacro("Unable to open HDF group (ReadDataForType field).");
-      return 0;
-    }
-
     std::string selectedName = originalFieldName;
     if (this->RenameArrays)
     {
@@ -4148,7 +4174,19 @@ int vtkFLUENTCFFReader::ReadDataForType(const std::string& groupName,
       selectedName += std::string("-phase_") + std::to_string(phaseIndex - 1);
     }
 
-    if (selection->ArrayIsEnabled(selectedName.c_str()))
+    if (!selection->ArrayIsEnabled(selectedName.c_str()))
+    {
+      continue;
+    }
+
+    hid_t groupdata = H5Gopen(group, originalFieldName.c_str(), H5P_DEFAULT);
+    if (groupdata < 0)
+    {
+      CHECK_HDF(H5Gclose(group));
+      vtkErrorMacro("Unable to open HDF group (ReadDataForType field).");
+      return 0;
+    }
+
     {
       uint64_t nSections = 0;
       hid_t attr = H5Aopen(groupdata, "nSections", H5P_DEFAULT);

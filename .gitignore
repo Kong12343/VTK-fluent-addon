@@ -5,4 +5,5 @@ examples/FluentCFFZoneViewer/build-**
 .cache/**
 .vscode/**
 .venv/**
-
+python/__pycache__/**
+python/.fluentcff_cache/*

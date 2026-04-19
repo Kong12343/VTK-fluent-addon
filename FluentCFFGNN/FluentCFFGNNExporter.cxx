@@ -8,6 +8,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <string>
+
 #include "vtkFLUENTCFFReader.h"
 
 FluentCFFGNNExporter::FluentCFFGNNExporter()
@@ -47,6 +49,26 @@ void FluentCFFGNNExporter::EnableAllFaceArrays()
   this->Reader->EnableAllFaceArrays();
 }
 
+void FluentCFFGNNExporter::SetExcludedFieldArrayNames(std::vector<std::string> names)
+{
+  this->ExcludedFieldArrayNames = std::move(names);
+}
+
+void FluentCFFGNNExporter::ClearExcludedFieldArrayNames()
+{
+  this->ExcludedFieldArrayNames.clear();
+}
+
+void FluentCFFGNNExporter::SetMaxExportedFieldColumns(int maxK)
+{
+  this->MaxExportedFieldColumns = maxK;
+}
+
+int FluentCFFGNNExporter::GetMaxExportedFieldColumns() const
+{
+  return this->MaxExportedFieldColumns;
+}
+
 void FluentCFFGNNExporter::Update()
 {
   if (this->CaseFileName.empty())
@@ -59,7 +81,58 @@ void FluentCFFGNNExporter::Update()
   {
     this->Reader->SetDataFileName(this->DataFileName);
   }
+  this->Reader->SetExcludedFieldArrayNames(this->ExcludedFieldArrayNames);
   this->Reader->Update();
+}
+
+void FluentCFFGNNExporter::ThrowIfExpandedExceedsMax(const std::vector<std::string>& expandedNames) const
+{
+  if (this->MaxExportedFieldColumns <= 0)
+  {
+    return;
+  }
+  const int k = static_cast<int>(expandedNames.size());
+  if (k > this->MaxExportedFieldColumns)
+  {
+    throw std::runtime_error(
+      "FluentCFFGNNExporter: expanded field column count K=" + std::to_string(k) +
+      " exceeds MaxExportedFieldColumns=" + std::to_string(this->MaxExportedFieldColumns));
+  }
+}
+
+std::vector<std::string> FluentCFFGNNExporter::SortedIntersectedChunkNames() const
+{
+  const int nCell = this->Reader->GetLoadedCellChunkCount();
+  const int nFace = this->Reader->GetLoadedFaceChunkCount();
+  std::unordered_set<std::string> faceNames;
+  faceNames.reserve(static_cast<std::size_t>(nFace) * 2 + 1);
+  for (int i = 0; i < nFace; ++i)
+  {
+    const char* n = this->Reader->GetLoadedFaceChunkName(i);
+    if (n)
+    {
+      faceNames.emplace(n);
+    }
+  }
+
+  std::vector<std::string> intersection;
+  for (int i = 0; i < nCell; ++i)
+  {
+    const char* n = this->Reader->GetLoadedCellChunkName(i);
+    if (!n)
+    {
+      continue;
+    }
+    std::string name(n);
+    if (faceNames.count(name) > 0)
+    {
+      intersection.push_back(std::move(name));
+    }
+  }
+
+  std::sort(intersection.begin(), intersection.end());
+  intersection.erase(std::unique(intersection.begin(), intersection.end()), intersection.end());
+  return intersection;
 }
 
 torch::Tensor FluentCFFGNNExporter::MakeFloatTensorFromFlat(
@@ -220,47 +293,63 @@ FluentCFFGNNExporter::GraphTensors FluentCFFGNNExporter::ExtractGraphTensorsImpl
 FluentCFFGNNExporter::FieldTensor FluentCFFGNNExporter::ExtractCellFieldTensorImpl() const
 {
   FieldTensor out;
-  const int nChunks = this->Reader->GetLoadedCellChunkCount();
   const int nc = this->Reader->GetCellCentroidCount();
-  if (nChunks <= 0 || nc <= 0)
+  const std::vector<std::string> sorted = this->SortedIntersectedChunkNames();
+  if (sorted.empty() || nc <= 0)
   {
     out.values = torch::empty({ nc, 0 }, torch::TensorOptions().dtype(torch::kFloat32));
     return out;
   }
 
-  std::vector<int> chunkDims;
-  chunkDims.reserve(static_cast<std::size_t>(nChunks));
-  std::vector<const double*> chunkData;
-  chunkData.reserve(static_cast<std::size_t>(nChunks));
-  std::vector<std::string> chunkNames;
-  chunkNames.reserve(static_cast<std::size_t>(nChunks));
-
   std::int64_t K = 0;
-  for (int i = 0; i < nChunks; ++i)
+  for (const auto& baseName : sorted)
   {
-    const char* n = this->Reader->GetLoadedCellChunkName(i);
-    const int dim = this->Reader->GetLoadedCellChunkDim(i);
-    const double* data = this->Reader->GetLoadedCellChunkData(i);
-    const vtkIdType tuples = this->Reader->GetLoadedCellChunkTupleCount(i);
-    if (!n || dim <= 0 || !data || tuples < nc)
+    int dim = 0;
+    for (int i = 0; i < this->Reader->GetLoadedCellChunkCount(); ++i)
     {
-      continue;
+      const char* n = this->Reader->GetLoadedCellChunkName(i);
+      if (n && baseName == n)
+      {
+        dim = this->Reader->GetLoadedCellChunkDim(i);
+        break;
+      }
     }
-    chunkNames.emplace_back(n);
-    chunkDims.push_back(dim);
-    chunkData.push_back(data);
-    K += dim;
-    auto expanded = ExpandComponentNames(chunkNames.back(), dim);
+    if (dim <= 0)
+    {
+      throw std::runtime_error(
+        "ExtractCellFieldTensor: missing cell chunk for array \"" + baseName + "\"");
+    }
+    K += static_cast<std::int64_t>(dim);
+    auto expanded = ExpandComponentNames(baseName, dim);
     out.names.insert(out.names.end(), expanded.begin(), expanded.end());
   }
+
+  this->ThrowIfExpandedExceedsMax(out.names);
 
   out.values = torch::empty({ nc, K }, torch::TensorOptions().dtype(torch::kFloat32));
   auto* dst = out.values.data_ptr<float>();
   std::int64_t col0 = 0;
-  for (std::size_t ci = 0; ci < chunkData.size(); ++ci)
+  for (const auto& baseName : sorted)
   {
-    const int dim = chunkDims[ci];
-    const double* src = chunkData[ci];
+    const double* src = nullptr;
+    int dim = 0;
+    vtkIdType tuples = 0;
+    for (int i = 0; i < this->Reader->GetLoadedCellChunkCount(); ++i)
+    {
+      const char* n = this->Reader->GetLoadedCellChunkName(i);
+      if (n && baseName == n)
+      {
+        dim = this->Reader->GetLoadedCellChunkDim(i);
+        src = this->Reader->GetLoadedCellChunkData(i);
+        tuples = this->Reader->GetLoadedCellChunkTupleCount(i);
+        break;
+      }
+    }
+    if (!src || dim <= 0 || tuples < nc)
+    {
+      throw std::runtime_error(
+        "ExtractCellFieldTensor: invalid cell chunk for array \"" + baseName + "\"");
+    }
     for (int r = 0; r < nc; ++r)
     {
       const std::size_t base = static_cast<std::size_t>(r) * static_cast<std::size_t>(dim);
@@ -272,7 +361,7 @@ FluentCFFGNNExporter::FieldTensor FluentCFFGNNExporter::ExtractCellFieldTensorIm
           std::isfinite(v) ? static_cast<float>(v) : 0.0f;
       }
     }
-    col0 += dim;
+    col0 += static_cast<std::int64_t>(dim);
   }
 
   return out;
@@ -290,51 +379,47 @@ FluentCFFGNNExporter::FieldTensor FluentCFFGNNExporter::ExtractBoundaryFieldTens
     return out;
   }
 
-  std::unordered_set<std::string> cellNames;
-  cellNames.reserve(static_cast<std::size_t>(cellChunks) * 2);
-  for (int i = 0; i < cellChunks; ++i)
+  const std::vector<std::string> sorted = this->SortedIntersectedChunkNames();
+  if (sorted.empty())
   {
-    const char* n = this->Reader->GetLoadedCellChunkName(i);
-    if (n)
-    {
-      cellNames.emplace(n);
-    }
+    out.values = torch::empty({ nb, 0 }, torch::TensorOptions().dtype(torch::kFloat32));
+    return out;
   }
-
-  struct FaceField
-  {
-    std::string name;
-    int dim = 0;
-    const double* data = nullptr;
-  };
-  std::vector<FaceField> keep;
-  keep.reserve(static_cast<std::size_t>(faceChunks));
 
   std::int64_t K = 0;
-  for (int i = 0; i < faceChunks; ++i)
+  for (const auto& baseName : sorted)
   {
-    const char* n = this->Reader->GetLoadedFaceChunkName(i);
-    const int dim = this->Reader->GetLoadedFaceChunkDim(i);
-    const double* data = this->Reader->GetLoadedFaceChunkData(i);
-    const vtkIdType tuples = this->Reader->GetLoadedFaceChunkTupleCount(i);
-    if (!n || dim <= 0 || !data)
+    int cellDim = 0;
+    for (int i = 0; i < this->Reader->GetLoadedCellChunkCount(); ++i)
     {
-      continue;
+      const char* n = this->Reader->GetLoadedCellChunkName(i);
+      if (n && baseName == n)
+      {
+        cellDim = this->Reader->GetLoadedCellChunkDim(i);
+        break;
+      }
     }
-    if (cellNames.find(n) == cellNames.end())
+    int faceDim = 0;
+    for (int i = 0; i < faceChunks; ++i)
     {
-      continue;
+      const char* n = this->Reader->GetLoadedFaceChunkName(i);
+      if (n && baseName == n)
+      {
+        faceDim = this->Reader->GetLoadedFaceChunkDim(i);
+        break;
+      }
     }
-    // Face tuple count is global faces; we will index by faceId.
-    if (tuples <= 0)
+    if (cellDim <= 0 || faceDim <= 0 || cellDim != faceDim)
     {
-      continue;
+      throw std::runtime_error(
+        "ExtractBoundaryFieldTensor: cell/face chunk dimension mismatch for \"" + baseName + "\"");
     }
-    keep.push_back({ std::string(n), dim, data });
-    K += dim;
-    auto expanded = ExpandComponentNames(keep.back().name, dim);
+    K += static_cast<std::int64_t>(cellDim);
+    auto expanded = ExpandComponentNames(baseName, cellDim);
     out.names.insert(out.names.end(), expanded.begin(), expanded.end());
   }
+
+  this->ThrowIfExpandedExceedsMax(out.names);
 
   out.values = torch::empty({ nb, K }, torch::TensorOptions().dtype(torch::kFloat32));
   out.values.zero_();
@@ -343,8 +428,6 @@ FluentCFFGNNExporter::FieldTensor FluentCFFGNNExporter::ExtractBoundaryFieldTens
     return out;
   }
 
-  // Boundary arrays are written zone by zone; recreate the same boundary faceId sequence and pull
-  // values by global faceId.
   std::vector<vtkIdType> boundaryFaceIds;
   boundaryFaceIds.reserve(static_cast<std::size_t>(nb));
   for (int zi = 0; zi < this->Reader->GetNumberOfFaceZones(); ++zi)
@@ -382,21 +465,39 @@ FluentCFFGNNExporter::FieldTensor FluentCFFGNNExporter::ExtractBoundaryFieldTens
 
   auto* dst = out.values.data_ptr<float>();
   std::int64_t col0 = 0;
-  for (const auto& field : keep)
+  for (const auto& baseName : sorted)
   {
+    const double* data = nullptr;
+    int dim = 0;
+    for (int i = 0; i < faceChunks; ++i)
+    {
+      const char* n = this->Reader->GetLoadedFaceChunkName(i);
+      if (n && baseName == n)
+      {
+        dim = this->Reader->GetLoadedFaceChunkDim(i);
+        data = this->Reader->GetLoadedFaceChunkData(i);
+        break;
+      }
+    }
+    if (!data || dim <= 0)
+    {
+      throw std::runtime_error(
+        "ExtractBoundaryFieldTensor: missing face chunk for array \"" + baseName + "\"");
+    }
     for (int r = 0; r < nb && r < static_cast<int>(boundaryFaceIds.size()); ++r)
     {
       const vtkIdType faceId = boundaryFaceIds[static_cast<std::size_t>(r)];
-      const std::size_t base = static_cast<std::size_t>(faceId) * static_cast<std::size_t>(field.dim);
-      for (int c = 0; c < field.dim; ++c)
+      const std::size_t base =
+        static_cast<std::size_t>(faceId) * static_cast<std::size_t>(dim);
+      for (int c = 0; c < dim; ++c)
       {
-        const double v = field.data[base + static_cast<std::size_t>(c)];
+        const double v = data[base + static_cast<std::size_t>(c)];
         dst[static_cast<std::size_t>(r) * static_cast<std::size_t>(K) +
           static_cast<std::size_t>(col0 + c)] =
           std::isfinite(v) ? static_cast<float>(v) : 0.0f;
       }
     }
-    col0 += field.dim;
+    col0 += static_cast<std::int64_t>(dim);
   }
 
   return out;

@@ -39,6 +39,14 @@
 
 启用全部 cell / face 数组，便于后续场量导出。
 
+### `SetExcludedFieldArrayNames(names: list[str]) -> None` / `ClearExcludedFieldArrayNames() -> None`
+
+在 **`Update()`** 时把排除列表同步到内部 `vtkFLUENTCFFReader`。名字须与 metadata 注册到数组选择器的名称一致（与 reader 读 dat 时的 `selectedName` 相同：含 **`RenameArrays` 映射**；多相时有 **`-phase_N`** 后缀）。对应数组在 **`GetData()` / `ReadDataForType`** 阶段**不会从 HDF5 读取**体数据（未 enable 的 field 不进入 `CellDataChunks`/`FaceDataChunks`）。
+
+### `SetMaxExportedFieldColumns(max_k: int) -> None` / `GetMaxExportedFieldColumns() -> int`
+
+限制 `ExtractCellFieldTensor` / `ExtractBoundaryFieldTensor` 展开后的 **总列数 K**（标量 1 列，矢量按分量展开）。**默认 14**；设为 **0** 表示不做列数校验。超限时 C++ 抛 `std::runtime_error`。
+
 ### `Update() -> None`
 
 执行读取与管线更新（内部调用 C++ `FluentCFFGNNExporter::Update()`）。**须**在提取张量前调用。
@@ -72,7 +80,28 @@
 | 键 | 类型 | 含义 |
 |----|------|------|
 | `values` | `torch.Tensor` | 拼接后的场量，`float32`（行为与 C++ exporter 一致） |
-| `names` | `list[str]` | 与 `values` 列对应的数组名称列表 |
+| `names` | `list[str]` | 与 `values` 列对应的名称列表（矢量展开为 `base[0]`…） |
+
+**列顺序约定**：两侧仅保留 **同时在 cell 与 face 结果集中出现的 VTK 数组名**，按 **字典序** 排列后再按 `ExpandComponentNames` 展开；因此 **`ExtractCellFieldTensor` 与 `ExtractBoundaryFieldTensor` 的 `names` 完全一致且列语义对齐**。
+
+---
+
+## 独立脚本中的 Windows DLL 路径 [`python/fluentcff_gnn_env.py`](../python/fluentcff_gnn_env.py)
+
+在**非 VS Code 任务**、**未设置** `FLUENTCFF_MSVC_VCPKG_ROOT` 的 PowerShell 中，在 `import fluentcff_gnn` **之前**调用：
+
+`from fluentcff_gnn_env import win32_add_extension_dll_dirs`  
+`win32_add_extension_dll_dirs(<仓库根目录>)`
+
+行为与 [AGENT.md](../AGENT.md) 一致：注册 `torch/lib`、vcpkg `bin`（环境变量或从 `cmake/FluentCFFGNNPy/CMakePresets.json` 的 `fluentcff-gnn-py-msvc` 回读），以及可选的 `CUDA` `bin`。
+
+## Python 辅助 [`python/fluentcff_field_utils.py`](../python/fluentcff_field_utils.py)（可选）
+
+| 函数 | 说明 |
+|------|------|
+| `read_dat_case_basename(dat_path)` | 读取 `dat.h5` 的 **`/settings/Case File`**，返回 `basename`（需安装 **h5py**） |
+| `maybe_flip_boundary_normals(normals, flip=True)` | 按需对法向取反 |
+| `assert_expanded_field_columns_within_limit(names, max_k=14)` | Python 侧列数断言（与 Exporter 的 maxK 独立） |
 
 ---
 
@@ -90,6 +119,9 @@
 | `GetDataFileName() -> str` | 当前 data 文件名 |
 | `SetRenameArrays(flag: bool) -> None` | 设置是否重命名数组 |
 | `GetRenameArrays() -> bool` | 查询 `SetRenameArrays` |
+| `SetExcludedFieldArrayNames(names: list[str]) -> None` | 与 `Exporter` 相同语义；在 `RequestData` 里 `GetData()` 之前 disable 对应 cell/face 数组 |
+| `ClearExcludedFieldArrayNames() -> None` | 清空排除列表 |
+| `GetExcludedFieldArrayNames() -> list[str]` | 当前排除列表 |
 | `Update() -> None` | 无参数；执行管线更新（绑定为 lambda，避免 MSVC 对重载 `Update` 的二义性） |
 
 ### Face zone 元数据
@@ -130,11 +162,70 @@
 
 1. `exp = fluentcff_gnn.Exporter()`
 2. `exp.SetCaseFileName(cas_path)`，`exp.SetDataFileName(dat_path)`
-3. （可选）`exp.SetRenameArrays(...)`，`exp.EnableAllCellArrays()`，`exp.EnableAllFaceArrays()`
+3. （可选）`exp.SetRenameArrays(...)`，`exp.EnableAllCellArrays()`，`exp.EnableAllFaceArrays()`；`exp.SetExcludedFieldArrayNames([...])`；`exp.SetMaxExportedFieldColumns(14)` 或 `0` 关闭校验
 4. `exp.Update()`
 5. `g = exp.ExtractGraphTensors()`，`cell = exp.ExtractCellFieldTensor()`，`bnd = exp.ExtractBoundaryFieldTensor()`
 
 完整可运行示例见 [`python/smoke_test_fluentcff_gnn.py`](../python/smoke_test_fluentcff_gnn.py)。
+
+---
+
+## Dataset、磁盘缓存与 `manifest.json`
+
+模块 [`python/fluentcff_gnn_dataset.py`](../python/fluentcff_gnn_dataset.py) 提供 **`FluentCFFGNNDataset`**（`torch.utils.data.Dataset`），将 Exporter 结果拆成 **四个 `.pt` 分片** 写入缓存目录，并在根目录生成 **`manifest.json`**，记录「一个 **`cas_key`**（拓扑）对应多个 **`dat_key`**（场）」的样本表。
+
+### 缓存目录布局（默认）
+
+根目录由环境变量 **`FLUENTCFF_CACHE_DIR`** 指定；未设置时使用 **`python/.fluentcff_cache`**（相对于仓库内 [`python/fluentcff_gnn_dataset.py`](../python/fluentcff_gnn_dataset.py) 所在目录）。
+
+| 相对路径 | 含义 |
+|----------|------|
+| `topo_boundary/<cas_key>.pt` | `boundary_coords`、`boundary_normals`、`boundary_labels`、`zoneType_values` + `meta` |
+| `topo_internal/<cas_key>.pt` | `internal_coords`、`edge_index` + `meta` |
+| `fields_boundary/<dat_key>.pt` | 边界场 `values`、`names` + `meta`（含配对 `cas_key` / `cas_path`） |
+| `fields_cell/<dat_key>.pt` | 内部场 `values`、`names` + `meta` |
+| `manifest.json` | `samples[]`：`sample_id`、`cas_path`、`dat_path`、`cas_key`、`dat_key` |
+
+同一 **`cas_key`** 在多行样本中复用时，拓扑分片只在磁盘上存 **一份**；每个 **`dat_key`** 对应一对场分片。
+
+### 失效条件
+
+- **拓扑分片**：`cas` 文件 `mtime`/`size` 变化或 `cas_key` 不匹配 → 对该样本重新导出并覆盖对应 `cas_key` 分片。
+- **场分片**：`dat` 变化或 `ExporterExportConfig`（`rename_arrays`、`excluded_field_array_names`、`max_exported_field_columns`）变化 → 重建该 `dat_key` 场分片。
+
+### `__getitem__` 返回键（`load_which="all"` 时）
+
+包含 `topo_boundary`、`topo_internal`、`boundary_fields`、`cell_fields`（均为张量字典或 `values`/`names`），以及各 `*_meta` 与 manifest 行信息。大图 **`edge_index`** 可能达 GB 级，建议 **`DataLoader(..., num_workers=0)`** 或谨慎使用多进程以免重复巨块读盘。
+
+一致性自检脚本：[`python/test_fluentcff_cache_roundtrip.py`](../python/test_fluentcff_cache_roundtrip.py)。
+
+---
+
+## 边界编码三模块 + GraphSAINT 基线（Python）
+
+可选训练管线（路径 B：**单样本一张 `Data`**，`batch_size=1` 跨 `(cas, dat)`；子图步内对 `edge_index` 采样）：
+
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| 特征与张量形状 | [`python/fluentcff_gnn_features.py`](../python/fluentcff_gnn_features.py) | `FeatureLayout` 固定边界 `C_pad`、场 `K_pad`；拼 `x_boundary`、`x_internal`，构造 `torch_geometric.data.Data`（内部节点 `x`、`y` 为 cell 场）。 |
+| 边界三子模块 | [`python/fluentcff_boundary_encoder.py`](../python/fluentcff_boundary_encoder.py) | `BoundaryPointEmbed` → `BoundarySetAggregate`（sum/mean concat）→ `BoundaryLatentHead` → `BoundaryEncoder`，输出 **`z ∈ ℝ^{d_z}`**。 |
+| 内部 GNN | [`python/fluentcff_internal_gnn.py`](../python/fluentcff_internal_gnn.py) | `InternalFieldGNN`：`z` 与内部节点拼接后多层 **SAGEConv**，回归 **`K` 维场**。 |
+| 训练入口 | [`python/train_baseline_graphsaint.py`](../python/train_baseline_graphsaint.py) | 优先 **`GraphSAINTNodeSampler`**（需 `torch-sparse`），否则 **`NeighborLoader`**，再否则 **随机节点子图**；多微步损失 **一次反传** 更新编码器与 GNN。 |
+
+依赖安装见 [`FluentCFFGNNPy-build-troubleshooting.md`](FluentCFFGNNPy-build-troubleshooting.md) **§14** 与 [`python/requirements-train.txt`](../python/requirements-train.txt)。
+
+---
+
+最小 `DataLoader` 示例：
+
+```python
+from torch.utils.data import DataLoader
+from fluentcff_gnn_dataset import FluentCFFGNNDataset, FluentCFFSample, collate_list_of_dicts
+
+ds = FluentCFFGNNDataset([FluentCFFSample(cas_path, dat_path)], force_rebuild=False)
+loader = DataLoader(ds, batch_size=1, shuffle=False, collate_fn=collate_list_of_dicts, num_workers=0)
+batch = next(iter(loader))
+```
 
 ---
 

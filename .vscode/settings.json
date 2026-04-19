@@ -1,4 +1,9 @@
 {
   "cmake.sourceDirectory": "F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer",
-  "fluentcff.gnn.vcpkgRoot": "E:/vcpkg-work/fluentcff-gnn/installed/x64-windows"
+  "fluentcff.gnn.vcpkgRoot": "E:/vcpkg-work/fluentcff-gnn/installed/x64-windows",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/build/fluentcff_gnn_py",
+    "${workspaceFolder}/python",
+    "${config:fluentcff.gnn.vcpkgRoot}"
+  ]
 }

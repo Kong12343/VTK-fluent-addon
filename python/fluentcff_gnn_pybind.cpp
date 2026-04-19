@@ -2,6 +2,9 @@
 #include <pybind11/stl.h>
 
 #include <memory>
+#include <string>
+#include <vector>
+
 #include <torch/extension.h>
 
 #include "FluentCFFGNNExporter.h"
@@ -42,6 +45,15 @@ PYBIND11_MODULE(fluentcff_gnn, m)
     .def("GetDataFileName", &vtkFLUENTCFFReader::GetDataFileName)
     .def("SetRenameArrays", &vtkFLUENTCFFReader::SetRenameArrays)
     .def("GetRenameArrays", &vtkFLUENTCFFReader::GetRenameArrays)
+    .def(
+      "SetExcludedFieldArrayNames",
+      [](vtkFLUENTCFFReader& r, const std::vector<std::string>& names) {
+        r.SetExcludedFieldArrayNames(names);
+      })
+    .def("ClearExcludedFieldArrayNames", &vtkFLUENTCFFReader::ClearExcludedFieldArrayNames)
+    .def(
+      "GetExcludedFieldArrayNames",
+      [](const vtkFLUENTCFFReader& r) { return r.GetExcludedFieldArrayNames(); })
     // vtkAlgorithm provides multiple Update overloads; MSVC needs an explicit lambda.
     .def("Update", [](vtkFLUENTCFFReader& r) { r.Update(); })
     // Zones
@@ -99,6 +111,14 @@ PYBIND11_MODULE(fluentcff_gnn, m)
     .def("SetRenameArrays", &FluentCFFGNNExporter::SetRenameArrays)
     .def("EnableAllCellArrays", &FluentCFFGNNExporter::EnableAllCellArrays)
     .def("EnableAllFaceArrays", &FluentCFFGNNExporter::EnableAllFaceArrays)
+    .def(
+      "SetExcludedFieldArrayNames",
+      [](FluentCFFGNNExporter& e, std::vector<std::string> names) {
+        e.SetExcludedFieldArrayNames(std::move(names));
+      })
+    .def("ClearExcludedFieldArrayNames", &FluentCFFGNNExporter::ClearExcludedFieldArrayNames)
+    .def("SetMaxExportedFieldColumns", &FluentCFFGNNExporter::SetMaxExportedFieldColumns)
+    .def("GetMaxExportedFieldColumns", &FluentCFFGNNExporter::GetMaxExportedFieldColumns)
     .def("Update", &FluentCFFGNNExporter::Update)
     .def("ExtractGraphTensors", [](const FluentCFFGNNExporter& e) { return GraphTensorsToDict(e.ExtractGraphTensors()); })
     .def("ExtractCellFieldTensor", [](const FluentCFFGNNExporter& e) { return FieldTensorToDict(e.ExtractCellFieldTensor()); })

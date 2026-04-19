@@ -2,6 +2,8 @@
 
 本文档汇总在 **Windows + MSVC（Ninja 或 VS 生成器）+ 仓库 `.venv`（pip torch / pybind11）+ vcpkg（VTK / HDF5，x64-windows）** 下构建与加载 `fluentcff_gnn` 扩展时常见问题：**现象 → 原因 → 处理**。实现以仓库内 [`cmake/FluentCFFGNNPy/CMakeLists.txt`](../cmake/FluentCFFGNNPy/CMakeLists.txt)、[`python/smoke_test_fluentcff_gnn.py`](../python/smoke_test_fluentcff_gnn.py)、[`.vscode/tasks.json`](../.vscode/tasks.json) 为准。
 
+**可选 Python 依赖**：[`python/fluentcff_field_utils.py`](../python/fluentcff_field_utils.py) 中的 `read_dat_case_basename` 需要 **`h5py`**（`pip install h5py`）；与扩展模块本身无关。
+
 ---
 
 ## 1. 环境与工具链约定（先读）
@@ -149,3 +151,19 @@
 - 最小验证：在设置好环境变量后运行 **`python/smoke_test_fluentcff_gnn.py`**（需 `data/v21` 下示例 cas/dat）。
 
 更多 Python API 说明见同目录下的 [`fluentcff_gnn_module.md`](fluentcff_gnn_module.md)。
+
+---
+
+## 14. 训练依赖：`torch-geometric` 与 PyG 二进制轮
+
+**场景**：运行 [`python/train_baseline_graphsaint.py`](../python/train_baseline_graphsaint.py) 或图网络相关代码，需 **PyTorch Geometric**（及 `torch-scatter` / `torch-sparse` 等与当前 **torch + CUDA** 匹配的 wheel）。
+
+**处理**：
+
+1. 先在本机 `.venv` 安装与硬件一致的 **`torch`**（CPU 或 CUDA wheel；见 [PyTorch Get Started](https://pytorch.org/get-started/locally/)）。
+2. 再安装可选清单 **[`python/requirements-train.txt`](../python/requirements-train.txt)** 中的 **`torch-geometric`**。
+3. 若 `pip` 无法解析 **`torch-scatter`** 等扩展，按 [PyG Installation](https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html) 使用 **`https://data.pyg.org/whl/`** 上与本机 **`torch-*` + `cu*`/`cpu`** 一致的额外包（示例：`pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.5.0+cu124.html`，版本号请自行替换）。
+
+**说明**：训练脚本在未安装 PyG 时会报错并提示上述步骤；扩展模块 **`fluentcff_gnn`** 本身仍仅需 `torch`。
+
+**GraphSAINT / NeighborLoader**：若未安装 **`torch-sparse`**（或 **`pyg-lib`**），PyG 的 `GraphSAINTNodeSampler` 与 `NeighborLoader` 不可用；[`python/train_baseline_graphsaint.py`](../python/train_baseline_graphsaint.py) 会自动退化为 **随机节点子图**（无需稀疏后端）。安装与当前 torch 版本匹配的 **`torch-sparse`** 后可启用完整采样器（见 PyG 官方 wheel 索引）。

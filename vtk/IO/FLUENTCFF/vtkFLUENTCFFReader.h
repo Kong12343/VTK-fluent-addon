@@ -37,6 +37,7 @@
 
 #include <cstdint> // std::uint64_t
 #include <memory>  // std::unique_ptr
+#include <string>
 #include <utility> // std::pair
 #include <vector>
 
@@ -156,6 +157,17 @@ public:
    */
   void DisableAllFaceArrays();
   void EnableAllFaceArrays();
+  //@}
+
+  //@{
+  /**
+   * Exclude these field array names from reading HDF5 cell/face chunks in GetData().
+   * Names must match the registry used by vtkDataArraySelection (same rules as ReadDataForType:
+   * RenameArrays mapping and optional "-phase_N" suffix for phase index > 1).
+   */
+  virtual void SetExcludedFieldArrayNames(const std::vector<std::string>& names);
+  virtual void ClearExcludedFieldArrayNames();
+  virtual const std::vector<std::string>& GetExcludedFieldArrayNames() const;
   //@}
 
   vtkIdType GetNumberOfNodesRead() const;
@@ -469,6 +481,8 @@ protected:
   //
   vtkNew<vtkDataArraySelection> CellDataArraySelection;
   vtkNew<vtkDataArraySelection> FaceDataArraySelection;
+  /** Applied in RequestData immediately before GetData(). */
+  std::vector<std::string> ExcludedFieldArrayNames;
   std::string FileName;
   std::string DataFileName;
   bool RenameArrays = false;
@@ -539,6 +553,8 @@ protected:
 private:
   vtkFLUENTCFFReader(const vtkFLUENTCFFReader&) = delete;
   void operator=(const vtkFLUENTCFFReader&) = delete;
+
+  void ApplyExcludedFieldArrayNames();
 
   struct DataChunk
   {

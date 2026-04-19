@@ -358,3 +358,45 @@
 - Actions: 新增 `doc/FluentCFFGNNPy-build-troubleshooting.md`、`doc/fluentcff_gnn_module.md`；更新 `doc/README.md` 入口链接。
 - Result: 文档与仓库 CMake/pybind/smoke/tasks 现状对齐，便于后续查阅与 onboarding。
 - Next: 若 `docs/README.md` 也需索引，可再补一条链到 `doc/` 两篇文档。
+
+## Current Window - 2026-04-20
+- Objective: 实现场变量排除（VTK 层不读 HDF5 chunk）、cell/boundary 场量按交集与字典序列对齐，以及展开列数 K≤14（可关闭）；Python 辅助与文档。
+- Actions: `vtkFLUENTCFFReader` 增加 `ExcludedFieldArrayNames`、`ApplyExcludedFieldArrayNames`（`RequestData` 内 `GetData()` 前）、`ReadDataForType` 在 `H5Gopen` 前先判 `ArrayIsEnabled`；`FluentCFFGNNExporter` 同步排除列表、`SortedIntersectedChunkNames`/`ThrowIfExpandedExceedsMax`、重写 `Extract*FieldTensorImpl`；`fluentcff_gnn_pybind.cpp` 绑定；新增 `python/fluentcff_field_utils.py`；更新 `smoke_test_fluentcff_gnn.py`、`doc/fluentcff_gnn_module.md`、`FluentCFFGNNPy-build-troubleshooting.md`。
+- Result: 代码与文档已落地；需在 MSVC+vcpkg 环境下重编 `fluentcff_gnn` 扩展后运行 smoke 验证。
+- Next: 本地 `cmake --build` 扩展并执行 `python/smoke_test_fluentcff_gnn.py`；若 dat 的 HDF5 `/settings` 结构与 `h5py` 路径不一致再调整 `read_dat_case_basename`。
+
+## Current Window - 2026-04-20 (Pylance fluentcff_gnn)
+- Objective: 消除 VS Code / Pylance 对 `fluentcff_gnn` 的「无法解析导入」，并让分析路径与 `fluentcff.gnn.vcpkgRoot` 一致。
+- Actions: 在 `.vscode/settings.json` 增加 `python.analysis.extraPaths`：`build/fluentcff_gnn_py`、`python`、以及 `${config:fluentcff.gnn.vcpkgRoot}`；在设置 `FLUENTCFF_MSVC_VCPKG_ROOT` 与扩展 PATH 后运行 `python/smoke_test_fluentcff_gnn.py` 验证运行时导入。
+- Result: smoke 脚本退出码 0、打印 `OK`；静态分析侧通过 extraPaths 指向构建目录与已配置的 vcpkg 安装前缀。
+- Next: 若仅把 `.pyd` 安装到其它目录，可把该目录追加进 `extraPaths` 或调整 `FLUENTCFF_PYD_OUTPUT_DIRECTORY`。
+
+## Current Window - 2026-04-20 (smoke DLL without env)
+- Objective: 修复在普通 PowerShell 直接运行 `smoke_test_fluentcff_gnn.py` 时 `ImportError: DLL load failed`（未设置 `FLUENTCFF_MSVC_VCPKG_ROOT`）。
+- Actions: 在 `python/smoke_test_fluentcff_gnn.py` 中从 `cmake/FluentCFFGNNPy/CMakePresets.json` 读取 `fluentcff-gnn-py-msvc` 的 `FLUENTCFF_MSVC_VCPKG_ROOT` 作为回退；将 `torch/lib` 预挂到 `PATH`；在未设置环境变量时验证 smoke 退出码 0。
+- Result: 清除 `FLUENTCFF_MSVC_VCPKG_ROOT` 后仍打印 `OK`。
+- Next: 若本机 vcpkg 前缀与 preset 不一致，仍以环境变量或改 preset 为准。
+
+## Current Window - 2026-04-20 (fluentcff_gnn_env)
+- Objective: 按 AGENT.md 在 Python 中集中补全 Windows 上扩展依赖的 DLL 搜索路径，并复用于 smoke 与 cache 测试。
+- Actions: 新增 `python/fluentcff_gnn_env.py`；`smoke_test_fluentcff_gnn.py` 与 `test_fluentcff_cache_roundtrip.py` 改为调用 `win32_add_extension_dll_dirs`；`doc/fluentcff_gnn_module.md` 增加说明。
+- Result: 与 `FLUENTCFF_MSVC_VCPKG_ROOT` / CMake preset 回退、`torch/lib` PATH 前缀行为对齐。
+- Next: 在本机 `.venv` 下运行 smoke 与 cache roundtrip。
+
+## Current Window - 2026-04-20 (Dataset four-shard cache)
+- Objective: 实现 `FluentCFFGNNDataset` 与四分片磁盘缓存（边界/内部拓扑 + 边界/内部场）及 `manifest.json`（一 cas 多 dat 对应关系）；元数据校验与 `FLUENTCFF_CACHE_DIR`。
+- Actions: 新增 `python/fluentcff_gnn_dataset.py`、`python/test_fluentcff_cache_roundtrip.py`；更新 `doc/fluentcff_gnn_module.md`。
+- Result: 训练侧可 `DataLoader` 消费；同 `cas_key` 拓扑分片只存一份；场分片 `meta` 带 `cas_key` 交叉引用。
+- Next: 用 `.venv` 的 3.13 与已编 `fluentcff_gnn` 跑 `test_fluentcff_cache_roundtrip.py` 做整体验证（大算例注意 `num_workers=0`）。
+
+## Current Window - 2026-04-20 (pipelines backlog doc)
+- Objective: 将尚未实现的管线单独记入 md，便于执行计划时按实际情况补充并修订 `总观.md`。
+- Actions: 新增 `doc/pipelines-backlog.md`（Backlog 条目、与首轮边界编码+GraphSAINT 计划的关系、维护约定与变更记录）。
+- Result: 文档已落盘；与 `总观.md`、`HISTORY.md` 的交叉引用方式已写明。
+- Next: 执行训练侧计划时在此更新条目状态，并在架构变更时同步 `总观.md`。
+
+## Current Window - 2026-04-20 (boundary encoder + GraphSAINT baseline)
+- Objective: 按计划落地边界三模块、`fluentcff_gnn_features`→PyG `Data`、`InternalFieldGNN`（SAGE）及 `train_baseline_graphsaint.py`（GraphSAINT/Neighbor/随机子图回退）；补充训练依赖与文档。
+- Actions: 新增 `python/requirements-train.txt`、`python/fluentcff_gnn_features.py`、`fluentcff_boundary_encoder.py`、`fluentcff_internal_gnn.py`、`train_baseline_graphsaint.py`；更新 `FluentCFFGNNPy-build-troubleshooting.md` §14、`doc/fluentcff_gnn_module.md`。
+- Result: 在无 `torch-sparse` 时脚本退化为随机子图；多样本微步梯度通过 **单次 `backward`（损失求和）** 回传到边界编码器；本地 `train_baseline_graphsaint.py` 单 epoch 退出码 0。
+- Next: 按需安装与 torch 匹配的 `torch-sparse`/`pyg-lib` 启用 GraphSAINT；场量量级归一化以降低 MSE 量级。

@@ -53,6 +53,14 @@ public:
   void EnableAllCellArrays();
   void EnableAllFaceArrays();
 
+  /** Same registry names as vtkFLUENTCFFReader array selection (after RenameArrays / phase suffix). */
+  void SetExcludedFieldArrayNames(std::vector<std::string> names);
+  void ClearExcludedFieldArrayNames();
+
+  /** Max expanded scalar/vector columns K in FieldTensor (default 14). Use 0 to disable the check. */
+  void SetMaxExportedFieldColumns(int maxK);
+  int GetMaxExportedFieldColumns() const;
+
   // Load and Update() the underlying reader.
   // If data file is missing/unset, only case is read and field tensors will be empty.
   void Update();
@@ -72,6 +80,10 @@ private:
   FieldTensor ExtractCellFieldTensorImpl() const;
   FieldTensor ExtractBoundaryFieldTensorImpl() const;
 
+  /** Cell/face chunks both present; lexicographic order by VTK array base name. */
+  std::vector<std::string> SortedIntersectedChunkNames() const;
+  void ThrowIfExpandedExceedsMax(const std::vector<std::string>& expandedNames) const;
+
   torch::Tensor MakeFloatTensorFromFlat(const float* data, std::int64_t n, std::int64_t d) const;
   torch::Tensor MakeFloatTensorFromFlat(const std::vector<float>& data, std::int64_t d) const;
 
@@ -79,4 +91,8 @@ private:
   std::string CaseFileName;
   std::string DataFileName;
   bool RenameArrays = false;
+
+  std::vector<std::string> ExcludedFieldArrayNames;
+  /** 0 means no limit. */
+  int MaxExportedFieldColumns = 14;
 };

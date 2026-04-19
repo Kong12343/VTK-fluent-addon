@@ -1,0 +1,11 @@
+# Optional training stack (PyTorch Geometric / GraphSAINT baseline).
+# Install PyTorch first to match your platform (CPU vs CUDA); then PyG wheels from data.pyg.org.
+#
+# Example (adjust torch version / index to your CUDA):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+#   pip install -r python/requirements-train.txt
+#
+# PyG auxiliary wheels must match torch major.minor + CUDA tag; see:
+#   https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html
+
+torch-geometric>=2.4.0
