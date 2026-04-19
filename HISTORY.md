@@ -280,3 +280,81 @@
 - Actions: 在 `main.cxx` 增加 `显示全拓扑` 复选框；勾选时禁用 `zoneCombo` 并在 `updateView` 中 Face 用 `vtkAppendPolyData`、Cell 用 `vtkAppendFilter`、FaceNormals 合并各 zone 采样点与全局 `VectorIdx`；`setLoadingState` 与 toggled 同步 zone 可用性；`CMakeLists.txt` 为可执行目标增加 `VTK::FiltersCore`。
 - Result: `cmake --build examples/FluentCFFZoneViewer/build-debug --target FluentCFFZoneViewer.exe` 通过（exit 0）。
 - Next: 若全 cell 合并内存过大，可加进度或上限提示。
+
+## Current Window - 2026-04-17 23:59:59
+- Objective: 实现 FluentCFF → GNN Tensor 导出模块（独立 CMake 入口 + pybind11 + LibTorch）。
+- Actions: 探测 MSYS2 `mingw64/lib/cmake`，确认当前未安装 `pybind11` 与 `Torch`；在 `vtkFLUENTCFFReader` 增加 loaded chunks 访问器；新增 `FluentCFFGNN/FluentCFFGNNExporter.*`（由早期 `vtk/IO/` 下路径迁出并更名）导出 boundary/cell/edge/one-hot 与字段拼接；新增 `python/fluentcff_gnn_pybind.cpp` 绑定；新增独立构建入口 `cmake/FluentCFFGNNPy/CMakeLists.txt`（仿照 viewer 的 MSYS2/VTK/HDF5 约定）与 smoke 脚本。
+- Result: 代码与构建入口已落地；由于环境尚未安装 `pybind11`/LibTorch，当前仅能完成源码侧集成，待依赖就绪后可直接编译生成 `.pyd` 并运行 smoke 脚本验证。
+- Next: 安装 `pybind11`（建议 MSYS2 pacman）并下载解压 LibTorch，配置 `pybind11_DIR`/`Torch_DIR` 后执行 CMake 配置与构建，再运行 `python/smoke_test_fluentcff_gnn.py`。
+
+## Current Window - 2026-04-20
+- Objective: 修复 FluentCFFGNNPy 在 MSVC+Ninja 下 pybind11 误选 MSYS2 Python 导致的 “Python libraries not found”，并澄清 pip CUDA torch 在无 CUDA 工具链时 `find_package(Torch)` 失败。
+- Actions: 更新 `cmake/FluentCFFGNNPy/CMakeLists.txt`：强制 `Python_EXECUTABLE` 为 `.venv/Scripts/python.exe`、启用 `PYBIND11_FINDPYTHON`、在 `find_package(pybind11)` 前先 `find_package(Python ... Development.Module)`；补充 Torch/CUDA 与 CPU 轮重装提示；复跑 `cmake` 验证 Python 链路已通。
+- Result: pybind11 已能使用 venv 的 Python 3.13；Torch 仍因 venv 内 CUDA 版 torch 找不到 CUDAToolkit 而中止配置。
+- Next: 在 `.venv` 内重装 CPU 版 `torch`，或安装与 torch 匹配的 CUDA 工具链后重新配置并构建。
+
+## Current Window - 2026-04-20 (CUDA path)
+- Objective: 在 FluentCFFGNNPy CMake 中显式指定本机 CUDA 12.8 安装路径，供 pip 版 CUDA torch 的 `find_package(Torch)` 使用。
+- Actions: 在 `cmake/FluentCFFGNNPy/CMakeLists.txt` 的 `find_package(Torch)` 前增加 `FLUENTCFF_NVCC`/`FLUENTCFF_CUDA_ROOT` 默认值（`C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8`），设置 `CUDAToolkit_ROOT`、`CUDA_TOOLKIT_ROOT_DIR` 与 `ENV{CUDA_PATH}`，并将 CUDA 根加入 `CMAKE_PREFIX_PATH`。
+- Result: 配置阶段应能定位与本机 `nvcc` 一致的 toolkit；若版本与 torch 仍不匹配需自行调整 cache 或重装 torch/CUDA。
+- Next: 重新运行 `cmake -S cmake/FluentCFFGNNPy -B build/fluentcff_gnn_py` 验证 `find_package(Torch)`。
+
+## Current Window - 2026-04-20 (CUDA root validation)
+- Objective: 避免将非完整 CUDA 目录（如缺少 `include/cuda.h` 的 `D:/CUDA/v12.8`）传给 Torch CMake 导致含糊失败。
+- Actions: 在 `cmake/FluentCFFGNNPy/CMakeLists.txt` 对 `FLUENTCFF_CUDA_ROOT` 校验 `include/cuda.h`，失败则 `FATAL_ERROR` 并提示典型 `Program Files` 路径；补充 `CUDA_HOME`、`CUDA_NVCC_EXECUTABLE`、`ENV{CUDA_HOME}` 以配合 PyTorch 内置 `find_package(CUDA)`。
+- Result: 配置阶段可更早发现错误 CUDA 前缀；正确 toolkit 下更易满足 `find_package(Torch)`。
+- Next: 使用真实 CUDA 根目录重新配置，或改用 CPU 版 torch。
+
+## Current Window - 2026-04-20 (layout)
+- Objective: 将 GNN 导出代码移出 `vtk/` 树，避免与 VTK 模块目录混放。
+- Actions: 删除 `vtk/IO/FLUENTCFFGNN/` 下源文件，在仓库根新增 `FluentCFFGNN/FluentCFFGNNExporter.h/.cxx`（后续再更名为无前缀类名）；更新 `cmake/FluentCFFGNNPy/CMakeLists.txt` 的源码与 include 路径；修正 `HISTORY.md` 中旧路径描述。
+- Result: Exporter 位于 VTK 模块外部，仍通过 `vtkFLUENTCFFReader` 依赖 `vtk/IO/FLUENTCFF`。
+- Next: 无。
+
+## Current Window - 2026-04-20 (rename)
+- Objective: 去掉导出类名的 `vtk` 前缀，并与文件名对齐。
+- Actions: 将 `vtkFLUENTCFFGNNExporter` 重命名为 `FluentCFFGNNExporter`；源文件改为 `FluentCFFGNN/FluentCFFGNNExporter.h/.cxx`；更新 `fluentcff_gnn_pybind.cpp` 与 `cmake/FluentCFFGNNPy/CMakeLists.txt`。
+- Result: Python 侧仍暴露为 `fluentcff_gnn.Exporter`，C++ 类型名为 `FluentCFFGNNExporter`。
+- Next: 无。
+
+## Current Window - 2026-04-20 (IntelliSense torch includes)
+- Objective: 修复 VS Code / clangd 报 `torch/torch.h` 找不到；在 `c_cpp_properties.json` 中补充与 CMake 一致的 pip torch 头文件路径。
+- Actions: 在 `.vscode/c_cpp_properties.json` 的 `includePath` 增加 `${workspaceFolder}/.venv/Lib/site-packages/torch/include` 与 `.../torch/include/torch/csrc/api/include`（pip 轮中 `torch/torch.h` 位于后者之下）；用 `Test-Path` 与 `clang++ -fsyntax-only` 验证包含链可打开该头文件。
+- Result: 头文件路径正确；MinGW clang 对 MSVC 构建的 torch 头仍可能产生大量 ABI 相关告警/错误，但「找不到 torch/torch.h」问题已消除。
+- Next: 若希望 IntelliSense 与 MSVC 构建完全一致，可将 `compilerPath`/`intelliSenseMode` 切到 MSVC 工具链或生成 `compile_commands.json` 供 clangd 使用。
+
+## Current Window - 2026-04-20 (Torch link target)
+- Objective: 修复 pip torch 配置成功后链接阶段报 `Torch::Torch` 目标不存在。
+- Actions: `cmake/FluentCFFGNNPy/CMakeLists.txt` 改为优先链接 CMake 目标 `torch`（pip 版 TorchConfig 提供），否则再尝试 `Torch::Torch`；CUDA 默认路径注释标明可为自动检测到的非 12.8 版本（如本机 v12.5）。
+- Result: 与 PyTorch 官方 CMake 变量/目标命名一致，生成步应可通过。
+- Next: 重新 `cmake` 与 `cmake --build` 全链路验证。
+
+## Current Window - 2026-04-19 18:55:27
+- Objective: 接续 FluentCFFGNNPy：补全 MSVC 下 HDF5（vcpkg）与 CUDA/CPU torch 的 CMake 行为，避免非 Windows 误用 MSYS2 HDF5。
+- Actions: 更新 `cmake/FluentCFFGNNPy/CMakeLists.txt`：MSVC 分支 `find_package(hdf5 CONFIG)` 并链接 `hdf5::hdf5-static`/`hdf5::hdf5-shared`；UNIX 使用 `find_package(HDF5)` + `HDF5::HDF5`；恢复 CUDA 的 nvcc/PATH/Program Files（及 Linux `/usr/local/cuda*`、`/opt/cuda*`）自动探测；仅在 venv 中存在 `torch_cuda.dll`/`libtorch_cuda.so*` 等时才强制定位 CUDA Toolkit，CPU 轮跳过 CUDA 前缀设置；非 Windows 上 `CUDA_NVCC_EXECUTABLE` 使用 `bin/nvcc`。
+- Result: MSVC+vcpkg 路径下不再写死 MSYS2 的 `libhdf5.dll.a`；CPU-only pip torch 不应再被缺少 `cuda.h` 的配置阶段误杀。
+- Next: 在 VS Native Tools 下用 `-DFLUENTCFF_MSVC_VCPKG_ROOT=.../installed/x64-windows` 重新配置并 `cmake --build`，再跑 `python/smoke_test_fluentcff_gnn.py`。
+
+## Current Window - 2026-04-19 20:22:10
+- Objective: 将 vcpkg 的下载/编译/安装输出迁到 E:，解决 F: 盘 VTK 构建时 `No space left on device`；避免 PATH 中 MSYS `cmake` 参与 vcpkg。
+- Actions: 新增 `cmake/FluentCFFGNNPy/install-vcpkg-deps-E.ps1`（`--downloads-root` / `--x-buildtrees-root` / `--x-packages-root` / `--x-install-root` 均指向 `E:\vcpkg-work\fluentcff-gnn`）；更新 `FLUENTCFF_MSVC_VCPKG_ROOT` 的 CACHE 说明；诊断 F: 仅剩约 17MB、E: 约 143GB 可用。
+- Result: 本机 Cursor 后台拉起的长时 `vcpkg` 不可靠，需用户在 **VS Developer PowerShell** 中自行执行该脚本直至结束；成功后 CMake 使用 `-DFLUENTCFF_MSVC_VCPKG_ROOT=E:/vcpkg-work/fluentcff-gnn/installed/x64-windows`。
+- Next: 用户执行脚本完成 VTK 后，再配置 `cmake/FluentCFFGNNPy` 并构建 `fluentcff_gnn`。
+
+## Current Window - 2026-04-19 (vcpkg cmake PATH)
+- Objective: 修复 zlib/VTK 在 x64-windows 下仍调用 `C:/tools/msys64/mingw64/bin/cmake.exe` 导致的 `BUILD_FAILED`。
+- Actions: 强化 `install-vcpkg-deps-E.ps1`：强制将 `F:\VS\...\CMake\bin` 置于 PATH 最前、用 `(?i)msys64` 过滤 PATH、`Get-Command cmake` 校验不得再落在 MSYS/MinGW。
+- Result: 仅用脚本启动 vcpkg 时应在配置阶段即发现错误 CMake；用户若手跑 `vcpkg.exe` 也需先清理 PATH 或套同一套 PATH 规则。
+- Next: 重新执行安装脚本；必要时先 `vcpkg remove zlib:x64-windows --recurse` 或清掉 E: 下对应 `buildtrees\zlib` 后重编。
+
+## Current Window - 2026-04-19 21:30:00
+- Objective: 解决 FluentCFFGNNPy 链接 `pybind11::detail::type_caster<at::Tensor>::cast` 失败，并验证 Python 能加载扩展、与 tasks 工作流一致。
+- Actions: 在 `cmake/FluentCFFGNNPy/CMakeLists.txt` 中 `find_library(torch_python)` 并链接到 `fluentcff_gnn`（保留 `TORCH_EXTENSION_NAME`）；`python/smoke_test_fluentcff_gnn.py` 增加 Windows `os.add_dll_directory`（torch/lib、vcpkg `bin`、`CUDA_PATH`）；`.vscode/tasks.json` 的 smoke 任务注入 `FLUENTCFF_MSVC_VCPKG_ROOT=${config:fluentcff.gnn.vcpkgRoot}` 与 `CUDA_PATH`。
+- Result: `cmake --build --preset fluentcff-gnn-py-msvc` 链接成功；在设置 `FLUENTCFF_MSVC_VCPKG_ROOT` 与 `CUDA_PATH` 后 smoke 脚本跑通并打印 `OK`。
+- Next: 若本机未设系统级 `CUDA_PATH`，可在该任务的 `env` 中改为显式路径或依赖用户 shell 环境。
+
+## Current Window - 2026-04-19 22:05:00
+- Objective: 按计划新增 FluentCFFGNNPy 编译排障与 `fluentcff_gnn` API 的 Markdown 文档。
+- Actions: 新增 `doc/FluentCFFGNNPy-build-troubleshooting.md`、`doc/fluentcff_gnn_module.md`；更新 `doc/README.md` 入口链接。
+- Result: 文档与仓库 CMake/pybind/smoke/tasks 现状对齐，便于后续查阅与 onboarding。
+- Next: 若 `docs/README.md` 也需索引，可再补一条链到 `doc/` 两篇文档。

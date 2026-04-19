@@ -4,5 +4,5 @@ examples/FluentCFFZoneViewer/build-msys2-clang/**
 examples/FluentCFFZoneViewer/build-**
 .cache/**
 .vscode/**
-
+.venv/**
 

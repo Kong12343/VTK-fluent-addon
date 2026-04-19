@@ -12,3 +12,8 @@
 
 路径：[`../docs/README.md`](../docs/README.md)
 
+## FluentCFFGNNPy / Python 扩展
+
+- [FluentCFFGNNPy 编译与运行排障](FluentCFFGNNPy-build-troubleshooting.md)（MSVC、vcpkg、CUDA、链接与 DLL 加载）
+- [`fluentcff_gnn` 模块 API 说明](fluentcff_gnn_module.md)（`Exporter`、`vtkFLUENTCFFReader`）
+

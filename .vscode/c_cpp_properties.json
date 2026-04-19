@@ -4,6 +4,10 @@
             "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/**",
+                "${workspaceFolder}/FluentCFFGNN",
+                "${workspaceFolder}/.venv/Lib/site-packages/torch/include",
+                "${workspaceFolder}/.venv/Lib/site-packages/torch/include/torch/csrc/api/include",
+                "${workspaceFolder}/.venv/Lib/site-packages/**",
                 "${workspaceFolder}/vtk/IO/FLUENTCFF",
                 "C:/tools/msys64/mingw64/include/**",
                 "C:/tools/msys64/mingw64/lib/cmake/vtk",

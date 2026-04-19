@@ -1,4 +1,4 @@
-﻿// SPDX-FileCopyrightText: Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen
+// SPDX-FileCopyrightText: Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen
 // SPDX-License-Identifier: BSD-3-Clause
 // This file reads the Fluent Common Fluid Format. It uses the HDF5 library
 // Original author : Arthur Piquet
@@ -1494,6 +1494,104 @@ int vtkFLUENTCFFReader::GetFaceArrayComponents(const char* name) const
 {
   const DataChunk* chunk = this->FindDataChunk(this->FaceDataChunks, name);
   return chunk ? static_cast<int>(chunk->dim) : 0;
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetLoadedCellChunkCount() const
+{
+  return static_cast<int>(this->CellDataChunks.size());
+}
+
+//------------------------------------------------------------------------------
+const char* vtkFLUENTCFFReader::GetLoadedCellChunkName(int index) const
+{
+  if (index < 0 || static_cast<std::size_t>(index) >= this->CellDataChunks.size())
+  {
+    return nullptr;
+  }
+  return this->CellDataChunks[static_cast<std::size_t>(index)].variableName.c_str();
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetLoadedCellChunkDim(int index) const
+{
+  if (index < 0 || static_cast<std::size_t>(index) >= this->CellDataChunks.size())
+  {
+    return 0;
+  }
+  return static_cast<int>(this->CellDataChunks[static_cast<std::size_t>(index)].dim);
+}
+
+//------------------------------------------------------------------------------
+const double* vtkFLUENTCFFReader::GetLoadedCellChunkData(int index) const
+{
+  if (index < 0 || static_cast<std::size_t>(index) >= this->CellDataChunks.size())
+  {
+    return nullptr;
+  }
+  const auto& v = this->CellDataChunks[static_cast<std::size_t>(index)].dataVector;
+  return v.empty() ? nullptr : v.data();
+}
+
+//------------------------------------------------------------------------------
+vtkIdType vtkFLUENTCFFReader::GetLoadedCellChunkTupleCount(int index) const
+{
+  if (index < 0 || static_cast<std::size_t>(index) >= this->CellDataChunks.size())
+  {
+    return 0;
+  }
+  const auto& chunk = this->CellDataChunks[static_cast<std::size_t>(index)];
+  const std::size_t dim = chunk.dim > 0 ? chunk.dim : 1;
+  return static_cast<vtkIdType>(chunk.dataVector.size() / dim);
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetLoadedFaceChunkCount() const
+{
+  return static_cast<int>(this->FaceDataChunks.size());
+}
+
+//------------------------------------------------------------------------------
+const char* vtkFLUENTCFFReader::GetLoadedFaceChunkName(int index) const
+{
+  if (index < 0 || static_cast<std::size_t>(index) >= this->FaceDataChunks.size())
+  {
+    return nullptr;
+  }
+  return this->FaceDataChunks[static_cast<std::size_t>(index)].variableName.c_str();
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetLoadedFaceChunkDim(int index) const
+{
+  if (index < 0 || static_cast<std::size_t>(index) >= this->FaceDataChunks.size())
+  {
+    return 0;
+  }
+  return static_cast<int>(this->FaceDataChunks[static_cast<std::size_t>(index)].dim);
+}
+
+//------------------------------------------------------------------------------
+const double* vtkFLUENTCFFReader::GetLoadedFaceChunkData(int index) const
+{
+  if (index < 0 || static_cast<std::size_t>(index) >= this->FaceDataChunks.size())
+  {
+    return nullptr;
+  }
+  const auto& v = this->FaceDataChunks[static_cast<std::size_t>(index)].dataVector;
+  return v.empty() ? nullptr : v.data();
+}
+
+//------------------------------------------------------------------------------
+vtkIdType vtkFLUENTCFFReader::GetLoadedFaceChunkTupleCount(int index) const
+{
+  if (index < 0 || static_cast<std::size_t>(index) >= this->FaceDataChunks.size())
+  {
+    return 0;
+  }
+  const auto& chunk = this->FaceDataChunks[static_cast<std::size_t>(index)];
+  const std::size_t dim = chunk.dim > 0 ? chunk.dim : 1;
+  return static_cast<vtkIdType>(chunk.dataVector.size() / dim);
 }
 
 //------------------------------------------------------------------------------

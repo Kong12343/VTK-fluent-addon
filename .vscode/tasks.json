@@ -2,6 +2,53 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "FluentCFFGNNPy: CMake Configure (preset)",
+      "type": "shell",
+      "command": "cmake --preset fluentcff-gnn-py-msvc",
+      "options": {
+        "cwd": "${workspaceFolder}/cmake/FluentCFFGNNPy"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "FluentCFFGNNPy: Build (preset)",
+      "type": "shell",
+      "command": "cmake --build --preset fluentcff-gnn-py-msvc --parallel",
+      "options": {
+        "cwd": "${workspaceFolder}/cmake/FluentCFFGNNPy"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "FluentCFFGNNPy: Configure+Build (preset)",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "FluentCFFGNNPy: CMake Configure (preset)",
+        "FluentCFFGNNPy: Build (preset)"
+      ],
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "FluentCFFGNNPy: smoke test (venv)",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe ${workspaceFolder}/python/smoke_test_fluentcff_gnn.py",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "${workspaceFolder}/.venv/Scripts;${workspaceFolder}/.venv/Lib/site-packages/torch/lib;${env:PATH}",
+          "FLUENTCFF_MSVC_VCPKG_ROOT": "${config:fluentcff.gnn.vcpkgRoot}",
+          "CUDA_PATH": "${env:CUDA_PATH}"
+        }
+      },
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
       "label": "CMake Clang Build Current File (Release)",
       "type": "shell",
       "command": "cmake -S \"${fileDirname}\" -B \"${fileDirname}/build-release\" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release; if ($LASTEXITCODE -eq 0) { cmake --build \"${fileDirname}/build-release\" --target \"${fileDirnameBasename}.exe\" }",

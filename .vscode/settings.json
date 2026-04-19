@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer"
+  "cmake.sourceDirectory": "F:/Users/20968/projects/ai/gnn/examples/FluentCFFZoneViewer",
+  "fluentcff.gnn.vcpkgRoot": "E:/vcpkg-work/fluentcff-gnn/installed/x64-windows"
 }

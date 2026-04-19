@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "fluentcff-gnn-py-msvc",
+      "displayName": "FluentCFFGNNPy (MSVC + Ninja + Release)",
+      "description": "Run from x64 Native Tools / VS Developer PowerShell. Edit FLUENTCFF_MSVC_VCPKG_ROOT here if your vcpkg prefix differs.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../../build/fluentcff_gnn_py",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "FLUENTCFF_MSVC_VCPKG_ROOT": "E:/vcpkg-work/fluentcff-gnn/installed/x64-windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "fluentcff-gnn-py-msvc",
+      "displayName": "Build FluentCFFGNNPy",
+      "configurePreset": "fluentcff-gnn-py-msvc"
+    }
+  ]
+}

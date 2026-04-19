@@ -244,6 +244,29 @@ public:
   double GetCellArrayValue(const char* name, vtkIdType cellId, int component = 0) const;
   double GetFaceArrayValue(const char* name, vtkIdType faceId, int component = 0) const;
 
+  //@{
+  /**
+   * Access loaded data chunks (after Update() with data file present).
+   * These are the underlying containers used by GetCellArrayValue/GetFaceArrayValue.
+   *
+   * Notes:
+   * - Returned pointers remain valid until the next ClearData()/Update() that reloads data.
+   * - `dim` is number of components per tuple.
+   * - `dataVector` is laid out as tuple-major: data[(tupleId * dim) + component].
+   */
+  int GetLoadedCellChunkCount() const;
+  const char* GetLoadedCellChunkName(int index) const;
+  int GetLoadedCellChunkDim(int index) const;
+  const double* GetLoadedCellChunkData(int index) const;
+  vtkIdType GetLoadedCellChunkTupleCount(int index) const;
+
+  int GetLoadedFaceChunkCount() const;
+  const char* GetLoadedFaceChunkName(int index) const;
+  int GetLoadedFaceChunkDim(int index) const;
+  const double* GetLoadedFaceChunkData(int index) const;
+  vtkIdType GetLoadedFaceChunkTupleCount(int index) const;
+  //@}
+
   vtkSmartPointer<vtkPolyData> CreateFaceZonePolyData(const char* zoneName,
     const char* faceArrayName = nullptr, int component = 0) const;
 
