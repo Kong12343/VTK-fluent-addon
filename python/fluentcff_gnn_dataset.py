@@ -35,12 +35,33 @@ def _sha16(*parts: bytes) -> str:
     return h.hexdigest()[:16]
 
 
-def compute_cas_key(cas_path: str) -> str:
-    """Short hash for topology shards (cas mesh identity + mtime/size)."""
+def _dataset_stem(filepath: str) -> str:
+    """Return the logical dataset name by stripping .cas.h5 / .dat.h5 suffix."""
+    name = Path(filepath).name
+    for suf in (".cas.h5", ".dat.h5"):
+        if name.endswith(suf):
+            return name[: -len(suf)]
+    return Path(filepath).stem
+
+
+def compute_cas_key(
+    cas_path: str,
+    *,
+    sparsify_epsilon: float = 0.5,
+    sparsify_seed: int = 0,
+) -> str:
+    """Short hash for topology shards (cas mesh identity + sparsification params + mtime/size)."""
     p = _norm_path(cas_path)
     mt, sz = _stat_sig(p)
     blob = json.dumps(
-        {"cas": p, "mtime_ns": mt, "size": sz, "topo_schema": CACHE_PAYLOAD_VERSION},
+        {
+            "cas": p,
+            "mtime_ns": mt,
+            "size": sz,
+            "topo_schema": CACHE_PAYLOAD_VERSION,
+            "sparsify_epsilon": sparsify_epsilon,
+            "sparsify_seed": sparsify_seed,
+        },
         sort_keys=True,
     ).encode("utf-8")
     return _sha16(blob)
@@ -82,6 +103,8 @@ class ExporterExportConfig:
     rename_arrays: bool = False
     excluded_field_array_names: list[str] = field(default_factory=list)
     max_exported_field_columns: int = 0
+    sparsify_epsilon: float = 0.5
+    sparsify_seed: int = 0
 
 
 LoadWhich = Literal["all", "boundary_only", "internal_only"]
@@ -94,13 +117,15 @@ def default_cache_dir() -> str:
     return str(Path(__file__).resolve().parent / ".fluentcff_cache")
 
 
-def _shard_paths(cache_root: str, cas_key: str, dat_key: str) -> dict[str, Path]:
+def _shard_paths(
+    cache_root: str, cas_key: str, dat_key: str, cas_stem: str, dat_stem: str
+) -> dict[str, Path]:
     root = Path(cache_root)
     return {
-        "topo_boundary": root / "topo_boundary" / f"{cas_key}.pt",
-        "topo_internal": root / "topo_internal" / f"{cas_key}.pt",
-        "fields_boundary": root / "fields_boundary" / f"{dat_key}.pt",
-        "fields_cell": root / "fields_cell" / f"{dat_key}.pt",
+        "topo_boundary": root / "topo_boundary" / f"{cas_stem}__{cas_key}.pt",
+        "topo_internal": root / "topo_internal" / f"{cas_stem}__{cas_key}.pt",
+        "fields_boundary": root / "fields_boundary" / f"{dat_stem}__{dat_key}.pt",
+        "fields_cell": root / "fields_cell" / f"{dat_stem}__{dat_key}.pt",
         "manifest": root / "manifest.json",
     }
 
@@ -110,6 +135,7 @@ def _meta_topo_matches(
     *,
     cas_path: str,
     cas_key: str,
+    export_cfg: ExporterExportConfig | None = None,
 ) -> bool:
     if meta.get("payload_version") != CACHE_PAYLOAD_VERSION:
         return False
@@ -120,6 +146,11 @@ def _meta_topo_matches(
     mt, sz = _stat_sig(cas_path)
     if meta.get("mtime_ns") != mt or meta.get("size") != sz:
         return False
+    if export_cfg is not None:
+        if meta.get("sparsify_epsilon") != export_cfg.sparsify_epsilon:
+            return False
+        if meta.get("sparsify_seed") != export_cfg.sparsify_seed:
+            return False
     return True
 
 
@@ -207,8 +238,8 @@ class FluentCFFGNNDataset(Dataset):
         Path(self.cache_root).mkdir(parents=True, exist_ok=True)
 
         self._manifest_entries: list[dict[str, Any]] = []
-        self._indexed: list[tuple[str, str, str, str]] = []
-        # (cas_key, dat_key, cas_path, dat_path) per dataset index
+        self._indexed: list[tuple[str, str, str, str, str, str]] = []
+        # (cas_key, dat_key, cas_path, dat_path, cas_stem, dat_stem) per dataset index
 
         self._prepare_caches_and_manifest()
 
@@ -229,15 +260,23 @@ class FluentCFFGNNDataset(Dataset):
             if not os.path.isfile(dat_path):
                 raise FileNotFoundError(f"Missing dat: {dat_path}")
 
-            cas_key = compute_cas_key(cas_path)
+            cas_key = compute_cas_key(
+                cas_path,
+                sparsify_epsilon=self.export_cfg.sparsify_epsilon,
+                sparsify_seed=self.export_cfg.sparsify_seed,
+            )
             dat_key = compute_dat_key(
                 dat_path,
                 rename_arrays=self.export_cfg.rename_arrays,
                 excluded_field_array_names=self.export_cfg.excluded_field_array_names,
                 max_exported_field_columns=self.export_cfg.max_exported_field_columns,
             )
+            cas_stem = _dataset_stem(cas_path)
+            dat_stem = _dataset_stem(dat_path)
 
-            paths = _shard_paths(self.cache_root, cas_key, dat_key)
+            paths = _shard_paths(
+                self.cache_root, cas_key, dat_key, cas_stem, dat_stem
+            )
 
             need_export = self.force_rebuild or not self._shards_valid(
                 paths,
@@ -257,12 +296,14 @@ class FluentCFFGNNDataset(Dataset):
                     dat_key=dat_key,
                 )
 
-            self._indexed.append((cas_key, dat_key, cas_path, dat_path))
+            self._indexed.append((cas_key, dat_key, cas_path, dat_path, cas_stem, dat_stem))
             self._manifest_entries.append(
                 {
                     "sample_id": i,
                     "cas_path": cas_path,
                     "dat_path": dat_path,
+                    "cas_basename": cas_stem,
+                    "dat_basename": dat_stem,
                     "cas_key": cas_key,
                     "dat_key": dat_key,
                 }
@@ -296,9 +337,9 @@ class FluentCFFGNNDataset(Dataset):
         fb = _torch_load_shard(paths["fields_boundary"])
         fc = _torch_load_shard(paths["fields_cell"])
 
-        if not _meta_topo_matches(tb.get("meta") or {}, cas_path=cas_path, cas_key=cas_key):
+        if not _meta_topo_matches(tb.get("meta") or {}, cas_path=cas_path, cas_key=cas_key, export_cfg=self.export_cfg):
             return False
-        if not _meta_topo_matches(ti.get("meta") or {}, cas_path=cas_path, cas_key=cas_key):
+        if not _meta_topo_matches(ti.get("meta") or {}, cas_path=cas_path, cas_key=cas_key, export_cfg=self.export_cfg):
             return False
         if not _meta_fields_matches(
             fb.get("meta") or {},
@@ -344,6 +385,8 @@ class FluentCFFGNNDataset(Dataset):
         if self.export_cfg.excluded_field_array_names:
             exp.SetExcludedFieldArrayNames(list(self.export_cfg.excluded_field_array_names))
         exp.SetMaxExportedFieldColumns(self.export_cfg.max_exported_field_columns)
+        exp.SetSparsifyEpsilon(self.export_cfg.sparsify_epsilon)
+        exp.SetSparsifySeed(self.export_cfg.sparsify_seed)
         exp.Update()
 
         gdict = exp.ExtractGraphTensors()
@@ -361,6 +404,8 @@ class FluentCFFGNNDataset(Dataset):
             "size": cas_sz,
             "shard": "topology",
             "subset": "boundary_or_internal_split",
+            "sparsify_epsilon": self.export_cfg.sparsify_epsilon,
+            "sparsify_seed": self.export_cfg.sparsify_seed,
         }
         meta_fields = {
             "payload_version": CACHE_PAYLOAD_VERSION,
@@ -381,6 +426,7 @@ class FluentCFFGNNDataset(Dataset):
             "boundary_normals": gdict["boundary_normals"],
             "boundary_labels": gdict["boundary_labels"],
             "zoneType_values": gdict["zoneType_values"],
+            "face_areas": gdict["face_areas"],           # NEW: [M] boundary face areas
         }
         tb_meta = dict(meta_topo)
         tb_meta["subset"] = "boundary"
@@ -388,6 +434,7 @@ class FluentCFFGNNDataset(Dataset):
         ti_tensors = {
             "internal_coords": gdict["internal_coords"],
             "edge_index": gdict["edge_index"],
+            "edge_weight": gdict["cell_face_areas"],     # NEW: [E]
         }
         ti_meta = dict(meta_topo)
         ti_meta["subset"] = "internal"
@@ -409,8 +456,10 @@ class FluentCFFGNNDataset(Dataset):
         return len(self._indexed)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        cas_key, dat_key, _, _ = self._indexed[index]
-        paths = _shard_paths(self.cache_root, cas_key, dat_key)
+        cas_key, dat_key, _, _, cas_stem, dat_stem = self._indexed[index]
+        paths = _shard_paths(
+            self.cache_root, cas_key, dat_key, cas_stem, dat_stem
+        )
 
         out: dict[str, Any] = {
             "sample_id": index,

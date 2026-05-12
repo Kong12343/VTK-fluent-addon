@@ -1,7 +1,7 @@
 """
 Boundary encoder as three modules: point embedding, set aggregation, latent head.
 
-See `doc/fluentcff_gnn_module.md` (boundary three modules + GraphSAINT).
+See `docs/fluentcff_gnn_module.md` (boundary three modules + GraphSAINT).
 """
 
 from __future__ import annotations

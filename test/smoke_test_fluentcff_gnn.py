@@ -17,7 +17,7 @@ def main() -> int:
 
     win32_add_extension_dll_dirs(repo_root)
 
-    import fluentcff_field_utils  # noqa: E402
+    from python import fluentcff_field_utils  # noqa: E402
     import fluentcff_gnn  
 
     cas = os.path.join(repo_root, "data", "v21", "step-gamma-20-eta-1_5.cas.h5")
@@ -52,6 +52,8 @@ def main() -> int:
     print("zoneType_values", g["zoneType_values"])
     print("internal_coords", tuple(g["internal_coords"].shape), g["internal_coords"].dtype)
     print("edge_index", tuple(g["edge_index"].shape), g["edge_index"].dtype)
+    print("face_areas", tuple(g["face_areas"].shape), g["face_areas"].dtype)
+    print("cell_face_areas (sparsified)", tuple(g["cell_face_areas"].shape), g["cell_face_areas"].dtype)
 
     cell = exp.ExtractCellFieldTensor()
     bnd = exp.ExtractBoundaryFieldTensor()
@@ -65,13 +67,26 @@ def main() -> int:
     assert g["boundary_normals"].shape[1] == 3
     assert g["internal_coords"].shape[1] == 3
     assert g["edge_index"].shape[0] == 2
+    assert g["face_areas"].shape[0] == g["boundary_coords"].shape[0]
+    assert g["cell_face_areas"].shape[0] == g["edge_index"].shape[1]
+    if g["face_areas"].numel() > 0:
+        assert (g["face_areas"] >= 0).all().item()
+    if g["cell_face_areas"].numel() > 0:
+        assert (g["cell_face_areas"] >= 0).all().item()
+        # Sparsification invariants: bidirectional pairs, alignment, positive weights, no NaN
+        E_out = g["edge_index"].shape[1]
+        assert E_out % 2 == 0, "edge_index must have even count (bidirectional pairs)"
+        assert g["cell_face_areas"].shape[0] == E_out, "cell_face_areas must align with edge_index"
+        assert (g["cell_face_areas"] > 0).all().item(), "sparsified weights must be positive"
+        assert torch.isfinite(g["cell_face_areas"]).all().item(), "sparsified weights must be finite"
     if g["boundary_labels"].numel() > 0:
         row_sum = g["boundary_labels"].sum(dim=1)
         # One-hot rows should sum to 1 (or 0 if something is missing).
         print("boundary_labels row_sum stats:", float(row_sum.min()), float(row_sum.max()))
 
     # Check no NaNs in exported float tensors (NaNs are replaced with 0 in exporter).
-    for k in ["boundary_coords", "boundary_normals", "internal_coords"]:
+    for k in ["boundary_coords", "boundary_normals", "internal_coords",
+              "face_areas", "cell_face_areas"]:
         t = g[k]
         if t.numel() > 0:
             assert torch.isfinite(t).all().item()

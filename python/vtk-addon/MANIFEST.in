@@ -1,0 +1,18 @@
+include setup.py
+include pyproject.toml
+include install_verify_vtk_addon.py
+include README.md
+include cpp/CMakeLists.txt
+
+recursive-include cpp *.cpp *.cxx *.h *.hpp *.cmake
+recursive-include vtk_addon_docs *.md *.pyi
+recursive-include vendor *.cxx *.h
+
+prune build
+prune dist
+prune manual-build
+prune manual-build-nmake
+prune manual-build-vs
+prune .tmp
+prune .verify-site-packages
+prune .verify-tmp

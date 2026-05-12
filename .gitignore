@@ -7,3 +7,11 @@ examples/FluentCFFZoneViewer/build-**
 .venv/**
 python/__pycache__/**
 python/.fluentcff_cache/*
+python/vtk-addon/.verify-site-packages
+python/vtk-addon/.verify-tmp
+python/vtk-addon/.tmp
+python/vtk-addon/build
+python/vtk-addon/manual-build
+python/vtk-addon/manual-build-nmake
+python/vtk-addon/manual-build-vs
+python/vtk-addon/cpp

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <random>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -67,6 +68,26 @@ void FluentCFFGNNExporter::SetMaxExportedFieldColumns(int maxK)
 int FluentCFFGNNExporter::GetMaxExportedFieldColumns() const
 {
   return this->MaxExportedFieldColumns;
+}
+
+void FluentCFFGNNExporter::SetSparsifyEpsilon(double epsilon)
+{
+  this->SparsifyEpsilon = epsilon;
+}
+
+double FluentCFFGNNExporter::GetSparsifyEpsilon() const
+{
+  return this->SparsifyEpsilon;
+}
+
+void FluentCFFGNNExporter::SetSparsifySeed(std::int64_t seed)
+{
+  this->SparsifySeed = seed;
+}
+
+std::int64_t FluentCFFGNNExporter::GetSparsifySeed() const
+{
+  return this->SparsifySeed;
 }
 
 void FluentCFFGNNExporter::Update()
@@ -161,6 +182,207 @@ torch::Tensor FluentCFFGNNExporter::MakeFloatTensorFromFlat(
   return this->MakeFloatTensorFromFlat(data.empty() ? nullptr : data.data(), n, d);
 }
 
+void FluentCFFGNNExporter::ApplyGraphSparsification(
+  torch::Tensor& edge_index, torch::Tensor& cell_face_areas) const
+{
+  const double eps = this->SparsifyEpsilon;
+  if (eps <= 0.0)
+  {
+    return;
+  }
+
+  const std::int64_t E = edge_index.size(1);
+  if (E == 0)
+  {
+    return;
+  }
+  if (E % 2 != 0)
+  {
+    throw std::runtime_error(
+      "ApplyGraphSparsification: E=" + std::to_string(E) +
+      " is odd; expected even number of directed edges (bidirectional pairs)");
+  }
+
+  const std::int64_t M = E / 2;
+  auto* weight_ptr = cell_face_areas.data_ptr<float>();
+  auto* edge_ptr   = edge_index.data_ptr<std::int64_t>();
+
+  // Compute mean weight over undirected pairs
+  double sum_w = 0.0;
+  for (std::int64_t k = 0; k < M; ++k)
+  {
+    sum_w += static_cast<double>(weight_ptr[2 * k]);
+  }
+  const double mean_w = sum_w / static_cast<double>(M);
+  const double T = eps * mean_w;
+
+  // RNG
+  std::mt19937_64 rng;
+  if (this->SparsifySeed != 0)
+  {
+    rng.seed(static_cast<std::uint64_t>(this->SparsifySeed));
+  }
+  else
+  {
+    std::random_device rd;
+    std::seed_seq seq{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
+    rng.seed(seq);
+  }
+  std::uniform_real_distribution<double> dist(0.0, 1.0);
+
+  // Sample undirected pairs
+  std::vector<std::int64_t> keep_src;
+  std::vector<std::int64_t> keep_dst;
+  std::vector<float>        keep_w;
+  keep_src.reserve(static_cast<std::size_t>(E));
+  keep_dst.reserve(static_cast<std::size_t>(E));
+  keep_w.reserve(static_cast<std::size_t>(E));
+
+  for (std::int64_t k = 0; k < M; ++k)
+  {
+    const std::int64_t i0 = 2 * k;
+    const std::int64_t i1 = 2 * k + 1;
+    const float w = weight_ptr[i0];
+    const double p = (w >= static_cast<float>(T)) ? 1.0 : static_cast<double>(w) / T;
+    const float kept_w = (w >= static_cast<float>(T)) ? w : static_cast<float>(T);
+
+    if (p >= 1.0 || dist(rng) < p)
+    {
+      keep_src.push_back(edge_ptr[i0]);
+      keep_dst.push_back(edge_ptr[i1]);
+      keep_w.push_back(kept_w);
+      keep_src.push_back(edge_ptr[i1]);
+      keep_dst.push_back(edge_ptr[i0]);
+      keep_w.push_back(kept_w);
+    }
+  }
+
+  // --- Connectivity post-pass ---
+  // Map node ids to indices 0..max_node_id
+  std::int64_t max_node = 0;
+  for (auto id : keep_src) { if (id > max_node) max_node = id; }
+  for (auto id : keep_dst) { if (id > max_node) max_node = id; }
+  const std::int64_t N = max_node + 1;
+
+  // Union-Find
+  std::vector<std::int64_t> parent(static_cast<std::size_t>(N));
+  for (std::int64_t i = 0; i < N; ++i) parent[static_cast<std::size_t>(i)] = i;
+  auto uf_find = [&](std::int64_t x) {
+    while (parent[static_cast<std::size_t>(x)] != x)
+    {
+      parent[static_cast<std::size_t>(x)] = parent[static_cast<std::size_t>(parent[static_cast<std::size_t>(x)])];
+      x = parent[static_cast<std::size_t>(x)];
+    }
+    return x;
+  };
+  auto uf_union = [&](std::int64_t a, std::int64_t b) {
+    a = uf_find(a);
+    b = uf_find(b);
+    if (a != b) parent[static_cast<std::size_t>(std::max(a, b))] = std::min(a, b);
+  };
+
+  // Union all kept edges
+  const std::int64_t E_k = static_cast<std::int64_t>(keep_src.size());
+  for (std::int64_t i = 0; i < E_k; ++i)
+  {
+    uf_union(keep_src[static_cast<std::size_t>(i)], keep_dst[static_cast<std::size_t>(i)]);
+  }
+
+  // Find root of first node, check for orphans
+  std::int64_t root0 = -1;
+  std::vector<std::int64_t> orphans;
+  for (std::int64_t i = 0; i < N; ++i)
+  {
+    const std::int64_t r = uf_find(i);
+    if (root0 < 0) { root0 = r; }
+    else if (r != root0) { orphans.push_back(i); }
+  }
+
+  // Reconnect orphans: for each orphan node, add edges to nodes in main component
+  // using the smallest-weight original edge that connects the orphan
+  if (!orphans.empty())
+  {
+    // Build adjacency for quick lookup: map (src,dst) -> undirected pair index
+    std::unordered_map<std::int64_t, std::int64_t> node_to_pair;
+    for (std::int64_t k = 0; k < M; ++k)
+    {
+      const std::int64_t i0 = 2 * k;
+      const std::int64_t i1 = 2 * k + 1;
+      node_to_pair[edge_ptr[i0] * N + edge_ptr[i1]] = k;
+      node_to_pair[edge_ptr[i1] * N + edge_ptr[i0]] = k;
+    }
+
+    for (auto orphan : orphans)
+    {
+      // Find smallest-weight edge from orphan to main component
+      std::int64_t best_k = -1;
+      float best_w = std::numeric_limits<float>::max();
+      for (std::int64_t sub_k = 0; sub_k < M; ++sub_k)
+      {
+        const std::int64_t i0 = 2 * sub_k;
+        const std::int64_t i1 = 2 * sub_k + 1;
+        const std::int64_t src = edge_ptr[i0];
+        const std::int64_t dst = edge_ptr[i1];
+        if ((src == orphan && uf_find(dst) == root0) ||
+            (dst == orphan && uf_find(src) == root0))
+        {
+          if (weight_ptr[i0] < best_w)
+          {
+            best_w = weight_ptr[i0];
+            best_k = sub_k;
+          }
+        }
+      }
+
+      if (best_k >= 0)
+      {
+        const std::int64_t i0 = 2 * best_k;
+        const std::int64_t i1 = 2 * best_k + 1;
+        const std::int64_t src = edge_ptr[i0];
+        const std::int64_t dst = edge_ptr[i1];
+        const float w = weight_ptr[i0];
+
+        // Check if this edge is not already kept
+        bool already_kept = false;
+        for (std::int64_t i = 0; i < E_k && !already_kept; ++i)
+        {
+          std::int64_t si = keep_src[static_cast<std::size_t>(i)];
+          std::int64_t di = keep_dst[static_cast<std::size_t>(i)];
+          if ((si == src && di == dst) || (si == dst && di == src))
+            already_kept = true;
+        }
+
+        if (!already_kept)
+        {
+          keep_src.push_back(src);
+          keep_dst.push_back(dst);
+          keep_w.push_back(w);
+          keep_src.push_back(dst);
+          keep_dst.push_back(src);
+          keep_w.push_back(w);
+          uf_union(orphan, root0);
+        }
+      }
+    }
+  }
+
+  // Build output tensors
+  const std::int64_t E_out = static_cast<std::int64_t>(keep_src.size());
+  auto new_edge = torch::empty({ 2, E_out }, torch::TensorOptions().dtype(torch::kInt64));
+  auto new_w    = torch::empty({ E_out }, torch::TensorOptions().dtype(torch::kFloat32));
+  auto* nep = new_edge.data_ptr<std::int64_t>();
+  auto* nwp = new_w.data_ptr<float>();
+  for (std::int64_t i = 0; i < E_out; ++i)
+  {
+    nep[i]        = keep_src[static_cast<std::size_t>(i)];
+    nep[E_out + i] = keep_dst[static_cast<std::size_t>(i)];
+    nwp[i]         = keep_w[static_cast<std::size_t>(i)];
+  }
+
+  edge_index      = new_edge;
+  cell_face_areas = new_w;
+}
+
 std::vector<std::string> FluentCFFGNNExporter::ExpandComponentNames(
   const std::string& base, int dim)
 {
@@ -213,6 +435,19 @@ FluentCFFGNNExporter::GraphTensors FluentCFFGNNExporter::ExtractGraphTensorsImpl
     edgePtr[e + i] = static_cast<std::int64_t>(dst[static_cast<std::size_t>(i)]);
   }
   out.edge_index = edge;
+
+  // face_areas [M_boundary] — same count as boundary_coords/normals
+  const int nfa = this->Reader->GetFaceAreaCount();
+  const float* fap = this->Reader->GetFaceAreas();
+  out.face_areas = this->MakeFloatTensorFromFlat(fap, nfa, 1).squeeze(1);
+
+  // cell_face_areas [E]
+  const int ne = this->Reader->GetCellFaceAreaCount();
+  const float* cfap = this->Reader->GetCellFaceAreas();
+  out.cell_face_areas = this->MakeFloatTensorFromFlat(cfap, ne, 1).squeeze(1);
+
+  // --- BK sparsification (epsilon-thresholded random sampling + connectivity) ---
+  this->ApplyGraphSparsification(out.edge_index, out.cell_face_areas);
 
   // boundary coords/normals
   const int nb = this->Reader->GetBoundaryFaceCount();

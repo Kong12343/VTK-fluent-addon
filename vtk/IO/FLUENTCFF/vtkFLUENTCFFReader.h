@@ -247,6 +247,13 @@ public:
   const float* GetFaceNormals() const;
   void GetFaceCentroidsByZone(int zoneId, std::vector<float>& centroids) const;
   void GetFaceNormalsByZone(int zoneId, std::vector<float>& normals) const;
+
+  // Face area data (boundary-only, same count/order as GetFaceCentroids/GetFaceNormals)
+  const float* GetFaceAreas() const;
+  int GetFaceAreaCount() const;
+  // CellFaceAreas: per-edge face area, aligned with edge_index
+  const float* GetCellFaceAreas() const;
+  int GetCellFaceAreaCount() const;
   //@}
 
   bool GetNodeCoordinates(vtkIdType nodeId, double coords[3]) const;
@@ -536,12 +543,17 @@ protected:
   // Boundary face data (non-interior faces)
   std::vector<float> FaceCentroids;     // [N_boundary_faces * 3]
   std::vector<float> FaceNormals;       // [N_boundary_faces * 3]
+  std::vector<float> FaceAreas;         // [N_boundary_faces] boundary face areas, same order as FaceCentroids/FaceNormals
   struct BoundaryFaceSpan
   {
-    vtkIdType firstBoundaryFaceIndex = -1;  // index into boundary arrays (FaceCentroids/FaceNormals)
+    vtkIdType firstBoundaryFaceIndex = -1;  // index into boundary arrays (FaceCentroids/FaceNormals/FaceAreas)
     vtkIdType count = 0;                   // number of faces in this span
   };
   std::map<int, BoundaryFaceSpan> FaceZoneIdToBoundarySpan;  // zoneId -> contiguous span in boundary arrays
+
+  // Face area data (polygon-accurate)
+  std::vector<float> FaceAreasAll;    // [F] area of every face (internal + boundary), internal use
+  std::vector<float> CellFaceAreas;   // [E] face area per directed edge, aligned with EdgeIndexSrc/Dst
 
   // FaceId -> Fluent zoneId mapping (size == Faces.size(), -1 if unknown)
   std::vector<int> FaceIdToZoneId;

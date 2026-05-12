@@ -48,7 +48,13 @@ def main() -> int:
         print("SKIP: missing data/v21 sample cas/dat")
         return 0
 
-    cfg = ExporterExportConfig(rename_arrays=False, excluded_field_array_names=[], max_exported_field_columns=0)
+    cfg = ExporterExportConfig(
+        rename_arrays=False,
+        excluded_field_array_names=[],
+        max_exported_field_columns=0,
+        sparsify_epsilon=0.5,
+        sparsify_seed=42,  # fixed seed for deterministic comparison
+    )
 
     with tempfile.TemporaryDirectory() as tmp:
         ds = FluentCFFGNNDataset(
@@ -67,6 +73,8 @@ def main() -> int:
         exp.EnableAllCellArrays()
         exp.EnableAllFaceArrays()
         exp.SetMaxExportedFieldColumns(cfg.max_exported_field_columns)
+        exp.SetSparsifyEpsilon(cfg.sparsify_epsilon)
+        exp.SetSparsifySeed(cfg.sparsify_seed)
         exp.Update()
         g = exp.ExtractGraphTensors()
         cell = exp.ExtractCellFieldTensor()
@@ -78,6 +86,8 @@ def main() -> int:
         assert item["topo_boundary"]["zoneType_values"] == g["zoneType_values"]
         assert torch.equal(item["topo_internal"]["internal_coords"], g["internal_coords"])
         assert torch.equal(item["topo_internal"]["edge_index"], g["edge_index"])
+        assert torch.equal(item["topo_boundary"]["face_areas"], g["face_areas"])
+        assert torch.equal(item["topo_internal"]["edge_weight"], g["cell_face_areas"])
         assert torch.equal(item["boundary_fields"]["values"], bnd["values"])
         assert item["boundary_fields"]["names"] == bnd["names"]
         assert torch.equal(item["cell_fields"]["values"], cell["values"])
@@ -98,6 +108,8 @@ def main() -> int:
         )
         item2 = ds2[0]
         assert torch.equal(item2["topo_internal"]["edge_index"], item["topo_internal"]["edge_index"])
+        assert torch.equal(item2["topo_boundary"]["face_areas"], item["topo_boundary"]["face_areas"])
+        assert torch.equal(item2["topo_internal"]["edge_weight"], item["topo_internal"]["edge_weight"])
 
     print("cache roundtrip OK (cache_root default would be", default_cache_dir() + ")")
     return 0

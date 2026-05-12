@@ -38,7 +38,7 @@ class InternalFieldGNN(nn.Module):
         if SAGEConv is None:
             raise ImportError(
                 "torch_geometric is required for InternalFieldGNN. "
-                "Install per doc/FluentCFFGNNPy-build-troubleshooting.md section 14."
+                "Install per docs/FluentCFFGNNPy-build-troubleshooting.md section 14."
             ) from _IMPORT_ERROR
         super().__init__()
         self.internal_input_dim = internal_input_dim
@@ -55,6 +55,8 @@ class InternalFieldGNN(nn.Module):
         x_internal: torch.Tensor,
         edge_index: torch.Tensor,
         z: torch.Tensor | None,
+        *,
+        edge_weight: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if z is None:
             z = x_internal.new_zeros(self.d_z)
@@ -63,5 +65,5 @@ class InternalFieldGNN(nn.Module):
         xz = torch.cat([x_internal, z.unsqueeze(0).expand(x_internal.size(0), -1)], dim=-1)
         h = self.input_lin(xz).relu()
         for conv in self.convs:
-            h = conv(h, edge_index).relu()
+            h = conv(h, edge_index, edge_weight=edge_weight).relu()
         return self.head(h)

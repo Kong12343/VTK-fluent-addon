@@ -694,6 +694,38 @@ std::mutable std::vector<FaceZoneTopologyCache> FaceZoneTopologyCaches;
 | API 扩展 | 基础读取 | 增加 zone 查询、cell 随机访问等 |
 | 性能优化 | 标准 VTK 流程 | 批量写入、预分配、缓存优化 |
 
+### 8.4 面面积计算
+
+`BuildGraphData()` 中新增 **FaceAreas** 和 **CellFaceAreas** 数组。
+
+**计算方式：**
+
+对所有面（含内部和边界），使用多边形精确面积公式：
+
+```
+area = 0.5 * |Σ(vi × v_{i+1})|  (下标循环)
+```
+
+- **三角形**：等价于标准叉积 `|(v1-v0)×(v2-v0)|/2`
+- **四边形及以上**：Newell 方法，对任意平面多边形精确；对翘曲面给出最佳拟合投影面积
+- 面积以 `float` 精度存储
+
+**三个数组：**
+
+| 数组 | 长度 | 含义 |
+|------|------|------|
+| `FaceAreasAll` | `[F]`（= `Faces.size()`） | 所有面（内部 + 边界）的面积，仅内部使用 |
+| `FaceAreas` | `[M]`（= 边界面数） | 仅边界面的面积，与 `FaceCentroids`/`FaceNormals` 顺序对齐 |
+| `CellFaceAreas` | `[E]`（= `EdgeIndexSrc.size()`） | 每条有向边对应面的面积，与 `edge_index` 列严格对齐；同一内部面的正反向边取相同面积值 |
+
+**公开 API：**
+- `GetFaceAreas()` → `FaceAreas` 裸指针（仅边界面，与 GetFaceCentroids/GetFaceNormals 一致）
+- `GetFaceAreaCount()` → `FaceAreas.size()`（= `GetBoundaryFaceCount()`）
+- `GetCellFaceAreas()` → `CellFaceAreas` 裸指针
+- `GetCellFaceAreaCount()` → `CellFaceAreas.size()`
+
+**GNN 下游用途：** `CellFaceAreas` 作为 `edge_weight` 传入 GraphSAGE 的 `SAGEConv(h, edge_index, edge_weight=edge_weight)` 中，替代默认的均值聚合，使大面积面的信息传递权重大于小面积面。
+
 ---
 
 ## 9. 文件对照表

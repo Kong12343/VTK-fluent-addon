@@ -21,6 +21,8 @@ static py::dict GraphTensorsToDict(const FluentCFFGNNExporter::GraphTensors& g)
   d["zoneType_values"] = g.zoneType_values;
   d["internal_coords"] = g.internal_coords;
   d["edge_index"] = g.edge_index;
+  d["face_areas"] = g.face_areas;
+  d["cell_face_areas"] = g.cell_face_areas;
   return d;
 }
 
@@ -93,6 +95,18 @@ PYBIND11_MODULE(fluentcff_gnn, m)
       const float* p = r.GetFaceNormals();
       return torch::from_blob(const_cast<float*>(p), { n, 3 }, torch::TensorOptions().dtype(torch::kFloat32)).clone();
     })
+    .def("GetFaceAreas", [](const vtkFLUENTCFFReader& r) {
+      const int n = r.GetFaceAreaCount();
+      const float* p = r.GetFaceAreas();
+      if (n <= 0 || !p) return torch::empty({ 0 }, torch::kFloat32);
+      return torch::from_blob(const_cast<float*>(p), { n }, torch::TensorOptions().dtype(torch::kFloat32)).clone();
+    })
+    .def("GetCellFaceAreas", [](const vtkFLUENTCFFReader& r) {
+      const int n = r.GetCellFaceAreaCount();
+      const float* p = r.GetCellFaceAreas();
+      if (n <= 0 || !p) return torch::empty({ 0 }, torch::kFloat32);
+      return torch::from_blob(const_cast<float*>(p), { n }, torch::TensorOptions().dtype(torch::kFloat32)).clone();
+    })
     // Loaded chunk introspection
     .def("GetLoadedCellChunkCount", &vtkFLUENTCFFReader::GetLoadedCellChunkCount)
     .def("GetLoadedCellChunkName", &vtkFLUENTCFFReader::GetLoadedCellChunkName)
@@ -119,6 +133,10 @@ PYBIND11_MODULE(fluentcff_gnn, m)
     .def("ClearExcludedFieldArrayNames", &FluentCFFGNNExporter::ClearExcludedFieldArrayNames)
     .def("SetMaxExportedFieldColumns", &FluentCFFGNNExporter::SetMaxExportedFieldColumns)
     .def("GetMaxExportedFieldColumns", &FluentCFFGNNExporter::GetMaxExportedFieldColumns)
+    .def("SetSparsifyEpsilon", &FluentCFFGNNExporter::SetSparsifyEpsilon)
+    .def("GetSparsifyEpsilon", &FluentCFFGNNExporter::GetSparsifyEpsilon)
+    .def("SetSparsifySeed", &FluentCFFGNNExporter::SetSparsifySeed)
+    .def("GetSparsifySeed", &FluentCFFGNNExporter::GetSparsifySeed)
     .def("Update", &FluentCFFGNNExporter::Update)
     .def("ExtractGraphTensors", [](const FluentCFFGNNExporter& e) { return GraphTensorsToDict(e.ExtractGraphTensors()); })
     .def("ExtractCellFieldTensor", [](const FluentCFFGNNExporter& e) { return FieldTensorToDict(e.ExtractCellFieldTensor()); })

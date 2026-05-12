@@ -2,6 +2,21 @@
 
 > 由各窗口代理维护：执行命令前先阅读其他窗口汇总；执行命令后追加当前窗口任务汇总与时间戳。
 
+## Current Window - 2026-05-11
+- Objective: 实现面面积计算（多边形精确面积），在 C++ → pybind11 → Python → PyG 全链路暴露面积数据，并在 GNN 中作为 edge_weight 使用。
+- Actions:
+  - 在 `vtkFLUENTCFFReader` 中新增 `FaceAreas [M]`（所有面）和 `CellFaceAreas [E]`（与 edge_index 对齐）成员变量及 5 个公共 API。
+  - 在 `BuildGraphData()` 中实现多边形精确面积计算：`area = 0.5 * |Σ(vi × v_{i+1})|`，对所有面（三角形/四边形/多边形）适用。
+  - 扩展 `FluentCFFGNNExporter::GraphTensors` 增加 `face_areas` / `cell_face_areas` 张量。
+  - pybind11 绑定新 API；`FluentCFFGNNDataset` 缓存分片增加 `face_areas` / `edge_weight`。
+  - `build_pyg_data()` 传递 `edge_weight` 到 PyG Data；`InternalFieldGNN.forward()` 接受 `edge_weight` 传入 SAGEConv。
+  - 训练脚本 `train_baseline_graphsaint.py` 中传递 `batch.edge_weight`。
+  - 将 `python/vtk-addon/vendor/vtk/IO/FLUENTCFF` 替换为到根目录 `vtk/IO/FLUENTCFF` 的目录 Junction，消除源码冗余。
+  - 修复 `test/smoke_test_fluentcff_gnn.py` 的 `from python import fluentcff_gnn` → `import fluentcff_gnn`。
+  - 更新 `docs/fluentcff_gnn_module.md`（API 表 + 缓存分片）、`docs/fluent-cff-modified-modules.md`（§8.4 面面积计算）。
+- Result: MSVC 构建通过，smoke test 输出 `face_areas (19806668,)` / `cell_face_areas (39131112,)`，cache roundtrip OK，数据与 edge_index 严格对齐。
+- Next: 用真实训练验证 `edge_weight` 对 GraphSAGE 聚合的收益。
+
 ## Current Window - 2026-04-15 04:08:41
 - Objective: 确认“每次运行按 CLI 输出日志”的具体诉求并准备调整方案。
 - Actions: 阅读了 `HISTORY.md` 与 `AGENT.md`，并记录当前会话时间戳。

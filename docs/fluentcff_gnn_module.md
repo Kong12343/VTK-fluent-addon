@@ -70,6 +70,8 @@
 | `zoneType_values` | `list[int]` | 出现的 zone 类型取值列表 |
 | `internal_coords` | `torch.Tensor` | 内部单元质心坐标，`float32` |
 | `edge_index` | `torch.Tensor` | 边列表 COO，`shape == (2, E)`，`int64` |
+| `face_areas` | `torch.Tensor` | 边界面面积，`shape == (M,)`，`float32`，与 `boundary_coords`/`boundary_normals` 行对齐 |
+| `cell_face_areas` | `torch.Tensor` | 每条有向边对应面的面积，`shape == (E,)`，`float32`，与 `edge_index` 列对齐 |
 
 具体维度与 `E` 由网格规模决定。
 
@@ -144,6 +146,8 @@
 | `GetBoundaryFaceCount() -> int` | — | 边界面数量 `M` |
 | `GetFaceCentroids() -> Tensor` | `(M, 3)`, `float32` | 边界面心坐标，**拷贝** |
 | `GetFaceNormals() -> Tensor` | `(M, 3)`, `float32` | 边界面法向，**拷贝** |
+| `GetFaceAreas() -> Tensor` | `(M,)`, `float32` | 边界面多边形面积，与 `GetFaceCentroids`/`GetFaceNormals` 顺序对齐，**拷贝** |
+| `GetCellFaceAreas() -> Tensor` | `(E,)`, `float32` | 每条有向边对应面的面积，与 `edge_index` 对齐 |
 
 ### 已加载分块信息
 
@@ -180,8 +184,8 @@
 
 | 相对路径 | 含义 |
 |----------|------|
-| `topo_boundary/<cas_key>.pt` | `boundary_coords`、`boundary_normals`、`boundary_labels`、`zoneType_values` + `meta` |
-| `topo_internal/<cas_key>.pt` | `internal_coords`、`edge_index` + `meta` |
+| `topo_boundary/<cas_key>.pt` | `boundary_coords`、`boundary_normals`、`boundary_labels`、`zoneType_values`、`face_areas` + `meta` |
+| `topo_internal/<cas_key>.pt` | `internal_coords`、`edge_index`、`edge_weight` + `meta` |
 | `fields_boundary/<dat_key>.pt` | 边界场 `values`、`names` + `meta`（含配对 `cas_key` / `cas_path`） |
 | `fields_cell/<dat_key>.pt` | 内部场 `values`、`names` + `meta` |
 | `manifest.json` | `samples[]`：`sample_id`、`cas_path`、`dat_path`、`cas_key`、`dat_key` |

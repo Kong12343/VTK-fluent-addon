@@ -21,7 +21,7 @@ def _require_pyg_data():
     except ImportError as e:
         raise ImportError(
             "torch_geometric is required. Install torch first, then: pip install torch-geometric "
-            "(and matching pyg wheels per doc/FluentCFFGNNPy-build-troubleshooting.md section 14)."
+            "(and matching pyg wheels per docs/FluentCFFGNNPy-build-troubleshooting.md section 14)."
         ) from e
     return Data
 
@@ -129,7 +129,11 @@ def build_pyg_data(
     y = build_y_cell_fields(sample, layout)
     pos = ti["internal_coords"].float()
 
-    data = Data(x=x, edge_index=edge_index, y=y, pos=pos)
+    edge_weight = ti.get("edge_weight")
+    if edge_weight is not None:
+        edge_weight = edge_weight.float()
+
+    data = Data(x=x, edge_index=edge_index, edge_weight=edge_weight, y=y, pos=pos)
     if device is not None:
         data = data.to(device)
     return data

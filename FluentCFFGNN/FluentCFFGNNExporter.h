@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -34,6 +35,9 @@ public:
 
     torch::Tensor internal_coords; // [NC, 3] float32
     torch::Tensor edge_index;      // [2, E] int64
+
+    torch::Tensor face_areas;      // [M]  float32 — boundary face areas (same count/order as boundary_coords)
+    torch::Tensor cell_face_areas; // [E]  float32 — face area per directed edge
   };
 
   FluentCFFGNNExporter();
@@ -61,6 +65,15 @@ public:
   void SetMaxExportedFieldColumns(int maxK);
   int GetMaxExportedFieldColumns() const;
 
+  // --- Graph sparsification (Benczur-Karger epsilon-threshold approximation) ---
+  /** Set sparsification quality parameter (default 0.5). epsilon==0.0 disables sparsification. */
+  void SetSparsifyEpsilon(double epsilon);
+  double GetSparsifyEpsilon() const;
+
+  /** Set random seed for deterministic sparsification (default 0 = random_device). */
+  void SetSparsifySeed(std::int64_t seed);
+  std::int64_t GetSparsifySeed() const;
+
   // Load and Update() the underlying reader.
   // If data file is missing/unset, only case is read and field tensors will be empty.
   void Update();
@@ -87,6 +100,9 @@ private:
   torch::Tensor MakeFloatTensorFromFlat(const float* data, std::int64_t n, std::int64_t d) const;
   torch::Tensor MakeFloatTensorFromFlat(const std::vector<float>& data, std::int64_t d) const;
 
+  /** Apply epsilon-threshold sparsification + connectivity-preserving post-pass. */
+  void ApplyGraphSparsification(torch::Tensor& edge_index, torch::Tensor& cell_face_areas) const;
+
   vtkSmartPointer<vtkFLUENTCFFReader> Reader;
   std::string CaseFileName;
   std::string DataFileName;
@@ -95,4 +111,7 @@ private:
   std::vector<std::string> ExcludedFieldArrayNames;
   /** 0 means no limit. */
   int MaxExportedFieldColumns = 14;
+
+  double SparsifyEpsilon = 0.5;
+  std::int64_t SparsifySeed = 0;
 };

@@ -12,7 +12,7 @@ import os
 import sys
 from itertools import islice
 from typing import Any, Callable, Iterator
-
+import torch
 
 def _repo_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -181,7 +181,8 @@ def train_one_sample(
     for batch in batch_iter:
         any_step = True
         batch = batch.to(device)
-        pred = internal_gnn(batch.x, batch.edge_index, z)
+        ew = getattr(batch, "edge_weight", None)
+        pred = internal_gnn(batch.x, batch.edge_index, z, edge_weight=ew)
         diff = (pred - batch.y) ** 2
         diff = diff * field_mask.unsqueeze(0)
         denom = (field_mask.sum().clamp(min=1.0) * pred.shape[0]).clamp(min=1.0)
@@ -197,7 +198,8 @@ def train_one_sample(
     if not any_step:
         optimizer.zero_grad(set_to_none=True)
         z = boundary_encoder(x_b)
-        pred = internal_gnn(data.x, data.edge_index, z)
+        ew = getattr(data, "edge_weight", None)
+        pred = internal_gnn(data.x, data.edge_index, z, edge_weight=ew)
         diff = (pred - data.y) ** 2 * field_mask.unsqueeze(0)
         denom = (field_mask.sum().clamp(min=1.0) * pred.shape[0]).clamp(min=1.0)
         loss = diff.sum() / denom
@@ -229,7 +231,7 @@ def main() -> int:
         print(
             "torch_geometric required for this script. Install PyTorch, then:\n"
             "  pip install -r python/requirements-train.txt\n"
-            "See doc/FluentCFFGNNPy-build-troubleshooting.md section 14."
+            "See docs/FluentCFFGNNPy-build-troubleshooting.md section 14."
         )
         return 2
 

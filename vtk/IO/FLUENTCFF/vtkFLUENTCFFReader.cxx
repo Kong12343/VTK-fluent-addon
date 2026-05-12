@@ -1488,6 +1488,30 @@ void vtkFLUENTCFFReader::GetFaceNormalsByZone(int zoneId, std::vector<float>& no
 }
 
 //------------------------------------------------------------------------------
+const float* vtkFLUENTCFFReader::GetFaceAreas() const
+{
+  return this->FaceAreas.empty() ? nullptr : this->FaceAreas.data();
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetFaceAreaCount() const
+{
+  return static_cast<int>(this->FaceAreas.size());
+}
+
+//------------------------------------------------------------------------------
+const float* vtkFLUENTCFFReader::GetCellFaceAreas() const
+{
+  return this->CellFaceAreas.empty() ? nullptr : this->CellFaceAreas.data();
+}
+
+//------------------------------------------------------------------------------
+int vtkFLUENTCFFReader::GetCellFaceAreaCount() const
+{
+  return static_cast<int>(this->CellFaceAreas.size());
+}
+
+//------------------------------------------------------------------------------
 bool vtkFLUENTCFFReader::GetNodeCoordinates(vtkIdType nodeId, double coords[3]) const
 {
   if (nodeId < 0 || nodeId >= this->Points->GetNumberOfPoints())
@@ -1844,18 +1868,77 @@ void vtkFLUENTCFFReader::GetNumberOfCellZones()
 //------------------------------------------------------------------------------
 void vtkFLUENTCFFReader::BuildGraphData()
 {
+  // Pre-compute polygon-accurate face area for every face.
+  // area = 0.5 * |Σ(vi × v_{i+1})| (indices wrap), exact for any planar polygon.
+  this->FaceAreasAll.clear();
+  this->FaceAreasAll.resize(this->Faces.size(), 0.0f);
+  for (std::size_t fi = 0; fi < this->Faces.size(); ++fi)
+  {
+    const auto& face = this->Faces[fi];
+    if (face.nodeCount < 3)
+    {
+      continue;
+    }
+    const int nc = static_cast<int>(std::min(face.nodeCount, 1024));
+    double nx = 0.0, ny = 0.0, nz = 0.0;
+    double x0 = 0.0, y0 = 0.0, z0 = 0.0;
+    double xp = 0.0, yp = 0.0, zp = 0.0;
+    // Get first valid node
+    bool firstValid = false;
+    for (int j = 0; j < nc; ++j)
+    {
+      const std::size_t poolIdx = static_cast<std::size_t>(face.nodeOffset + j);
+      if (poolIdx < this->FaceNodePool.size())
+      {
+        const int nodeId = this->FaceNodePool[poolIdx];
+        if (nodeId >= 0 && nodeId < this->Points->GetNumberOfPoints())
+        {
+          double coords[3];
+          this->Points->GetPoint(nodeId, coords);
+          if (!firstValid)
+          {
+            x0 = coords[0]; y0 = coords[1]; z0 = coords[2];
+            xp = x0; yp = y0; zp = z0;
+            firstValid = true;
+            continue;
+          }
+          const double cx = coords[0], cy = coords[1], cz = coords[2];
+          // Cross product: vi × v_{i+1} relative to origin
+          nx += yp * cz - zp * cy;
+          ny += zp * cx - xp * cz;
+          nz += xp * cy - yp * cx;
+          xp = cx; yp = cy; zp = cz;
+        }
+      }
+    }
+    // Closing edge: last → first
+    if (firstValid)
+    {
+      nx += yp * z0 - zp * y0;
+      ny += zp * x0 - xp * z0;
+      nz += xp * y0 - yp * x0;
+    }
+    const double area = 0.5 * std::sqrt(nx * nx + ny * ny + nz * nz);
+    this->FaceAreasAll[fi] = static_cast<float>(area);
+  }
+
   // Build edge_index from face c0/c1 adjacency
   this->EdgeIndexSrc.clear();
   this->EdgeIndexDst.clear();
-  for (const auto& face : this->Faces)
+  this->CellFaceAreas.clear();
+  for (std::size_t fi = 0; fi < this->Faces.size(); ++fi)
   {
+    const auto& face = this->Faces[fi];
     if (face.c0 >= 0 && face.c1 >= 0)
     {
+      const float area = this->FaceAreasAll[fi];
       this->EdgeIndexSrc.push_back(face.c0);
       this->EdgeIndexDst.push_back(face.c1);
+      this->CellFaceAreas.push_back(area);
       // Add reverse edge for undirected graph
       this->EdgeIndexSrc.push_back(face.c1);
       this->EdgeIndexDst.push_back(face.c0);
+      this->CellFaceAreas.push_back(area);
     }
   }
 
@@ -1908,9 +1991,10 @@ void vtkFLUENTCFFReader::BuildGraphData()
       }
     }
   }
-  // Compute boundary face centroids and normals
+  // Compute boundary face centroids, normals and areas
   this->FaceCentroids.clear();
   this->FaceNormals.clear();
+  this->FaceAreas.clear();
   this->FaceZoneIdToBoundarySpan.clear();
 
   // Build zoneId -> zoneType map
@@ -1954,6 +2038,7 @@ void vtkFLUENTCFFReader::BuildGraphData()
     // Reserve once for contiguous append.
     this->FaceCentroids.reserve(this->FaceCentroids.size() + static_cast<std::size_t>(zoneFaceCount) * 3);
     this->FaceNormals.reserve(this->FaceNormals.size() + static_cast<std::size_t>(zoneFaceCount) * 3);
+    this->FaceAreas.reserve(this->FaceAreas.size() + static_cast<std::size_t>(zoneFaceCount));
 
     for (vtkIdType faceId = fz.firstFaceId; faceId <= fz.lastFaceId; ++faceId)
     {
@@ -1966,6 +2051,7 @@ void vtkFLUENTCFFReader::BuildGraphData()
         this->FaceNormals.push_back(0.0f);
         this->FaceNormals.push_back(0.0f);
         this->FaceNormals.push_back(0.0f);
+        this->FaceAreas.push_back(0.0f);
         continue;
       }
 
@@ -1978,6 +2064,7 @@ void vtkFLUENTCFFReader::BuildGraphData()
         this->FaceNormals.push_back(0.0f);
         this->FaceNormals.push_back(0.0f);
         this->FaceNormals.push_back(0.0f);
+        this->FaceAreas.push_back(0.0f);
         continue;
       }
 
@@ -2009,6 +2096,7 @@ void vtkFLUENTCFFReader::BuildGraphData()
         this->FaceNormals.push_back(0.0f);
         this->FaceNormals.push_back(0.0f);
         this->FaceNormals.push_back(0.0f);
+        this->FaceAreas.push_back(0.0f);
         continue;
       }
 
@@ -2052,6 +2140,7 @@ void vtkFLUENTCFFReader::BuildGraphData()
         this->FaceNormals.push_back(0.0f);
         this->FaceNormals.push_back(0.0f);
       }
+      this->FaceAreas.push_back(this->FaceAreasAll[static_cast<std::size_t>(faceId)]);
     }
   }
 }
