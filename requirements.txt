@@ -1,0 +1,17 @@
+# FluentCFF-GNN Python dependencies
+#
+# Install PyTorch first to match your platform (CPU vs CUDA), then:
+#   pip install -r requirements.txt
+#
+# PyTorch install examples:
+#   pip install torch                                    # CPU
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128   # CUDA 12.8
+
+# Core ML framework (required by all modules)
+torch
+
+# Graph neural network framework (required by fluentcff_gnn_features, fluentcff_internal_gnn, training)
+torch-geometric>=2.4.0
+
+# Optional: read .dat.h5 settings metadata (used by fluentcff_field_utils.read_dat_case_basename)
+h5py

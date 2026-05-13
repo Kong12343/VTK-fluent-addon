@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:httpbin.org)",
+      "PowerShell(netsh winhttp show proxy)",
+      "PowerShell(try { $response = Invoke-WebRequest -Uri \"https://httpbin.org/ip\" -TimeoutSec 10 -UseBasicParsing; $response.StatusCode; $response.Content } catch { $_.Exception.Message })",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import shutil, os; [shutil.rmtree\\(os.path.join\\(r'f:\\\\Users\\\\20968\\\\projects\\\\ai\\\\gnn\\\\python\\\\vtk-addon', d\\), ignore_errors=False, onerror=lambda f,p,e: \\(os.chmod\\(p,0o777\\), f\\(p\\)\\)\\) for d in ['.tmp','.verify-tmp']]; print\\('done'\\)\")",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_context7_context7__query-docs",
+      "PowerShell($env:TAVILY_API_KEY -ne $null; if \\($env:TAVILY_API_KEY\\) { \"Key set \\(length: $\\($env:TAVILY_API_KEY.Length\\)\\)\" } else { \"No TAVILY_API_KEY found\" })",
+      "WebFetch(domain:github.com)",
+      "mcp__tavily-remote-mcp__tavily_extract",
+      "Bash(git -C \"f:\\\\Users\\\\20968\\\\projects\\\\ai\\\\gnn\" log --oneline -20)",
+      "Bash(where vcvarsall *)",
+      "Bash(where cl *)",
+      "Read(//f/VS/**)",
+      "PowerShell(Get-ChildItem \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\" -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })",
+      "PowerShell($vsDir = \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\"; if \\(Test-Path $vsDir\\) { Get-ChildItem $vsDir -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } } else { Write-Host \"Dir not found: $vsDir\" })",
+      "PowerShell($root = \"F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF\"; $vendor = \"F:/Users/20968/projects/ai/gnn/python/vtk-addon/vendor/vtk/IO/FLUENTCFF\"; $files = @\\(\"vtkFLUENTCFFInternal.cxx\", \"vtkFLUENTCFFInternal.h\", \"vtkIOFLUENTCFFModule.h\", \"vtkFLUENTCFFReader.h\", \"vtkFLUENTCFFReader.cxx\"\\); foreach \\($f in $files\\) { Remove-Item \"$vendor/$f\" -Force; New-Item -ItemType SymbolicLink -Path \"$vendor/$f\" -Target \"$root/$f\" -Force; Write-Host \"Linked: $f\" })",
+      "PowerShell($root = \"F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF\"; $vendor = \"F:/Users/20968/projects/ai/gnn/python/vtk-addon/vendor/vtk/IO/FLUENTCFF\"; $files = @\\(\"vtkFLUENTCFFInternal.cxx\", \"vtkFLUENTCFFInternal.h\", \"vtkIOFLUENTCFFModule.h\", \"vtkFLUENTCFFReader.h\", \"vtkFLUENTCFFReader.cxx\"\\); foreach \\($f in $files\\) { New-Item -ItemType HardLink -Path \"$vendor/$f\" -Target \"$root/$f\" -Force; Write-Host \"HardLinked: $f\" })",
+      "PowerShell($vendorDir = \"F:/Users/20968/projects/ai/gnn/python/vtk-addon/vendor/vtk/IO/FLUENTCFF\"; $rootDir = \"F:/Users/20968/projects/ai/gnn/vtk/IO/FLUENTCFF\"; Remove-Item -Recurse -Force $vendorDir; cmd /c mklink /J \"$vendorDir\" \"$rootDir\")",
+      "Read(//f//**)",
+      "Read(//d//**)",
+      "Bash(find \"C:/Program Files \\(x86\\)/Microsoft Visual Studio\" -name \"vcvarsall.bat\" 2>/dev/null; echo \"---cl---\"; find \"C:/\" -maxdepth 6 -name \"cl.exe\" 2>/dev/null | head -5; echo \"---vs-installer---\"; ls \"C:/Program Files \\(x86\\)/Microsoft Visual Studio/Installer/\" 2>/dev/null)",
+      "Read(//c//**)",
+      "Bash(cmd /c \"call \\\\\"F:\\\\VS\\\\VC\\\\Auxiliary\\\\Build\\\\vcvarsall.bat\\\\\" x64 >nul 2>&1 && cd /d \\\\\"F:\\\\Users\\\\20968\\\\projects\\\\ai\\\\gnn\\\\python\\\\vtk-addon\\\\cpp\\\\\" && \\\\\"F:\\\\VS\\\\Common7\\\\IDE\\\\CommonExtensions\\\\Microsoft\\\\CMake\\\\CMake\\\\bin\\\\cmake.exe\\\\\" -S . -B build -DFLUENTCFF_MSVC_VCPKG_ROOT=E:/vcpkg-work/fluentcff-gnn/installed/x64-windows -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1\")",
+      "Bash(cmd /c \"call \\\\\"F:\\\\VS\\\\VC\\\\Auxiliary\\\\Build\\\\vcvarsall.bat\\\\\" x64 2>&1 && echo ENV_OK\")",
+      "PowerShell($vcvars = \"F:\\\\VS\\\\VC\\\\Auxiliary\\\\Build\\\\vcvarsall.bat\"; if \\(Test-Path $vcvars\\) { Write-Host \"vcvarsall found\"; & cmd /c \"`\"$vcvars`\" x64 && echo ENV_OK\" } else { Write-Host \"NOT FOUND: $vcvars\" })",
+      "PowerShell($vcvars = \"F:\\\\VS\\\\VC\\\\Auxiliary\\\\Build\\\\vcvarsall.bat\"; $cmakeExe = \"F:\\\\VS\\\\Common7\\\\IDE\\\\CommonExtensions\\\\Microsoft\\\\CMake\\\\CMake\\\\bin\\\\cmake.exe\"; $srcDir = \"F:\\\\Users\\\\20968\\\\projects\\\\ai\\\\gnn\\\\python\\\\vtk-addon\\\\cpp\"; $buildDir = \"$srcDir/build\"; $cmd = \"`\"$vcvars`\" x64 >nul 2>&1 && `\"$cmakeExe`\" -S `\"$srcDir`\" -B `\"$buildDir`\" -DFLUENTCFF_MSVC_VCPKG_ROOT=E:/vcpkg-work/fluentcff-gnn/installed/x64-windows -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1\"; & cmd /c $cmd)",
+      "PowerShell($vcvars = \"F:\\\\VS\\\\VC\\\\Auxiliary\\\\Build\\\\vcvarsall.bat\"; $cmakeExe = \"F:\\\\VS\\\\Common7\\\\IDE\\\\CommonExtensions\\\\Microsoft\\\\CMake\\\\CMake\\\\bin\\\\cmake.exe\"; $buildDir = \"F:\\\\Users\\\\20968\\\\projects\\\\ai\\\\gnn\\\\python\\\\vtk-addon\\\\cpp/build\"; $cmd = \"`\"$vcvars`\" x64 >nul 2>&1 && `\"$cmakeExe`\" --build `\"$buildDir`\" --parallel 2>&1\"; & cmd /c $cmd)",
+      "PowerShell($vcvars = \"F:\\\\VS\\\\VC\\\\Auxiliary\\\\Build\\\\vcvarsall.bat\"; $cmakeExe = \"F:\\\\VS\\\\Common7\\\\IDE\\\\CommonExtensions\\\\Microsoft\\\\CMake\\\\CMake\\\\bin\\\\cmake.exe\"; $buildDir = \"F:\\\\Users\\\\20968\\\\projects\\\\ai\\\\gnn\\\\build\\\\fluentcff_gnn_py\"; $cmd = \"`\"$vcvars`\" x64 >nul 2>&1 && `\"$cmakeExe`\" --build `\"$buildDir`\" --parallel 2>&1\"; & cmd /c $cmd)",
+      "PowerShell($env:FLUENTCFF_MSVC_VCPKG_ROOT = \"E:/vcpkg-work/fluentcff-gnn/installed/x64-windows\"; & \"F:/Users/20968/projects/ai/gnn/.venv/Scripts/python.exe\" \"F:/Users/20968/projects/ai/gnn/test/smoke_test_fluentcff_gnn.py\" 2>&1)",
+      "PowerShell($env:FLUENTCFF_MSVC_VCPKG_ROOT = \"E:/vcpkg-work/fluentcff-gnn/installed/x64-windows\"; & \"F:/Users/20968/projects/ai/gnn/.venv/Scripts/python.exe\" \"F:/Users/20968/projects/ai/gnn/test/test_fluentcff_cache_roundtrip.py\" 2>&1)"
+    ]
+  }
+}

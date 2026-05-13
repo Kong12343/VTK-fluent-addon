@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($vcvars = \"F:\\\\VS\\\\VC\\\\Auxiliary\\\\Build\\\\vcvarsall.bat\"; $cmakeExe = \"F:\\\\VS\\\\Common7\\\\IDE\\\\CommonExtensions\\\\Microsoft\\\\CMake\\\\CMake\\\\bin\\\\cmake.exe\"; $buildDir = \"F:\\\\Users\\\\20968\\\\projects\\\\ai\\\\gnn\\\\build\\\\fluentcff_gnn_py\"; $cmd = \"`\"$vcvars`\" x64 >nul 2>&1 && `\"$cmakeExe`\" --build `\"$buildDir`\" --parallel 2>&1\"; & cmd /c $cmd)",
+      "PowerShell($env:FLUENTCFF_MSVC_VCPKG_ROOT = \"E:/vcpkg-work/fluentcff-gnn/installed/x64-windows\"; & \"F:/Users/20968/projects/ai/gnn/.venv/Scripts/python.exe\" \"F:/Users/20968/projects/ai/gnn/test/smoke_test_fluentcff_gnn.py\" 2>&1)",
+      "PowerShell($env:FLUENTCFF_MSVC_VCPKG_ROOT = \"E:/vcpkg-work/fluentcff-gnn/installed/x64-windows\"; & \"F:/Users/20968/projects/ai/gnn/.venv/Scripts/python.exe\" \"F:/Users/20968/projects/ai/gnn/test/test_fluentcff_cache_roundtrip.py\" 2>&1)"
+    ]
+  }
+}

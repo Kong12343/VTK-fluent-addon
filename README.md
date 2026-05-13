@@ -45,11 +45,11 @@ cmake -S cmake/FluentCFFGNNPy -B build/fluentcff_gnn_py --preset fluentcff-gnn-p
 cmake --build build/fluentcff_gnn_py
 ```
 
-### 安装训练依赖
+### 安装依赖
 
 ```powershell
-pip install torch-geometric
-pip install -r python/requirements-train.txt
+pip install -r requirements.txt              # 核心 + 训练依赖
+pip install -r python/requirements-train.txt  # 训练可选依赖（torch-sparse 等）
 ```
 
 ### 运行

@@ -2,7 +2,7 @@
 
 本文档综合以下来源：
 
-- 项目内说明：[`fluent-cff-dat-cas-structure.md`](./fluent-cff-dat-cas-structure.md)、[`../h5文件格式.md`](../h5文件格式.md)
+- 项目内说明：[`fluent-cff-dat-cas-structure.md`](./fluent-cff-dat-cas-structure.md)
 - 本仓库 Reader 实现：[`../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx`](../vtk/IO/FLUENTCFF/vtkFLUENTCFFReader.cxx)（实际打开的路径与数据集/属性名）
 
 **说明：** 下文先给出 **通用** CFF 树（与 Reader 一致）；**第 4 节** 为目录 `data/v21` 下实测样例的完整 HDF5 树与 `fields` 清单（2026-04-15 用 `h5py` 遍历生成）。
@@ -19,7 +19,6 @@ gnn/
 ├── docs/
 │   ├── fluent-cff-dat-cas-structure.md
 │   └── cff-v21-cas-dat-hdf5-field-tree.md   # 本文件
-├── h5文件格式.md                      # V21 简要笔记（settings 等）
 └── vtk/IO/FLUENTCFF/
     ├── vtkFLUENTCFFReader.cxx        # HDF5 读取逻辑
     └── vtkFLUENTCFFInternal.h        # 字段显示名映射（非 HDF 路径）
@@ -35,7 +34,7 @@ CFF 判定：`vtkFLUENTCFFReader::OpenCaseFile` 要求同时存在组 `/meshes` 
 
 | 路径 | 类型 | 内容（Reader 或笔记） |
 |------|------|------------------------|
-| `/settings` | group | 必须存在；常见子项见 `h5文件格式.md`（如 `Origin`、`Version` 等），**本 Reader 未读取其中数据集** |
+| `/settings` | group | 必须存在；常见子项（如 `Origin`、`Version` 等），**本 Reader 未读取其中数据集** |
 | `/meshes` | group | 网格根 |
 
 ### 1.2 `/meshes/1` — 网格实例

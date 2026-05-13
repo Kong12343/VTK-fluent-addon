@@ -14,4 +14,6 @@ python/vtk-addon/build
 python/vtk-addon/manual-build
 python/vtk-addon/manual-build-nmake
 python/vtk-addon/manual-build-vs
-python/vtk-addon/cpp
+python/vtk-addon/vendor
+python/vtk-addon/cpp/build
+.playwright-mcp
